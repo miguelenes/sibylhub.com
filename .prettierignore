@@ -17,6 +17,5 @@ vendor
 apps/backoffice
 packages/schemas/generated
 packages/schemas/json-schema
-packages/schemas/fixtures/*.json
-packages/schemas/fixtures/malformed-ecosystem.json
+packages/schemas/fixtures
 openspec
