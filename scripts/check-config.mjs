@@ -17,6 +17,7 @@ const requiredPaths = [
   "packages/schemas/fixtures/valid-skills.json",
   "packages/schemas/fixtures/valid-invariants.json",
   "packages/typescript-config/package.json",
+  "packages/design-system/package.json",
   "apps/web/package.json",
   "apps/web/wrangler.toml",
   "apps/backoffice/package.json",

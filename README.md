@@ -15,6 +15,7 @@ SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registr
 │   └── docs/                Docusaurus static documentation
 ├── packages/
 │   ├── schemas/             JSON Schema, Zod validators, fixtures
+│   ├── design-system/       shared Oracle & Engine tokens and React telemetry primitives
 │   └── typescript-config/   shared TypeScript compiler settings
 ├── Cargo.toml               Rust workspace
 ├── package.json              pnpm and Turborepo entry points
@@ -44,7 +45,7 @@ The environment examples contain shape only. Copy them to local environment file
 | `pnpm dev`              | Turborepo       | Starts package development processes in parallel                                             |
 | `pnpm dev:web`          | `apps/web`      | Starts Astro development on port 4321                                                        |
 | `pnpm dev:backend`      | `apps/backend`  | Starts the Rust API on `127.0.0.1:8787`                                                      |
-| `pnpm build`            | Turborepo       | Builds schemas, web, backoffice assets, Rust release binaries, and docs                      |
+| `pnpm build`            | Turborepo       | Builds schemas, design-system, web, backoffice assets, Rust release binaries, and docs       |
 | `pnpm test`             | Turborepo       | Runs local package test suites                                                               |
 | `pnpm test:cov`         | Turborepo       | Runs package coverage tasks and reports unavailable drivers separately                       |
 | `pnpm lint`             | Turborepo       | Runs package lint and configuration checks                                                   |
@@ -54,7 +55,7 @@ The environment examples contain shape only. Copy them to local environment file
 | `pnpm clean`            | Turborepo       | Removes generated package output and local Rust/Turbo output                                 |
 | `pnpm verify:contracts` | root dispatcher | Verifies generated schemas, deterministic fixtures, and cross-runtime contract shape offline |
 
-Package manifests document native commands. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer, and Rust uses Cargo. `wrangler deploy`, registry publication, database migrations, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
+Package manifests document native commands. `packages/design-system` is owned by pnpm, builds ESM/declaration output plus `dist/styles/globals.css`, and provides the shared token stylesheet to the Filament theme. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer while consuming frontend assets through pnpm/Vite, and Rust uses Cargo. `wrangler deploy`, registry publication, database migrations, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
 
 ## Evidence boundary
 

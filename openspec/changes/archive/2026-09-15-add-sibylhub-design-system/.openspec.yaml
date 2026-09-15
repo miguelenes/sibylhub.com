@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-15
+goal: Create one semantic Oracle & Engine design contract consumed by React
+  primitives and the Filament 5 backoffice theme

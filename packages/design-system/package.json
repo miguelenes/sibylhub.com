@@ -1,0 +1,56 @@
+{
+  "$schema": "https://www.schemastore.org/package.json",
+  "name": "@sibylhub/design-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tokens": "./dist/styles/globals.css",
+    "./tailwind": {
+      "types": "./dist/tailwind-preset.d.ts",
+      "import": "./dist/tailwind-preset.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm build:js && pnpm build:types && pnpm build:css",
+    "build:css": "node scripts/copy-css.mjs",
+    "build:js": "tsup",
+    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
+    "lint": "tsc --noEmit --project tsconfig.json",
+    "format": "prettier --check src scripts *.json *.ts",
+    "format:write": "prettier --write src scripts *.json *.ts",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "pnpm build && vitest run",
+    "test:cov": "pnpm build && vitest run --coverage",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@radix-ui/react-progress": "^1.1.7",
+    "lucide-react": ">=0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^3.4.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@radix-ui/react-progress": "^1.1.7",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.3.3",
+    "tsup": "^8.3.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

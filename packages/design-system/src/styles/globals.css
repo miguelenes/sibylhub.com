@@ -1,0 +1,139 @@
+/* Oracle & Engine tokens: HSL channels stay space-separated for shadcn/ui compatibility. */
+:root {
+  color-scheme: dark;
+
+  --background: 230 24% 5%;
+  --foreground: 210 20% 92%;
+  --surface: 222 24% 7%;
+  --surface-elevated: 222 24% 9%;
+  --card: 222 24% 7%;
+  --card-foreground: 210 20% 92%;
+  --popover: 222 24% 9%;
+  --popover-foreground: 210 20% 92%;
+  --border: 220 13% 18%;
+  --input: 220 13% 18%;
+  --muted: 222 17% 12%;
+  --muted-foreground: 215 16% 62%;
+  --primary: 199 89% 48%;
+  --primary-foreground: 230 24% 5%;
+  --accent: 265 89% 66%;
+  --accent-foreground: 230 24% 5%;
+  --ring: 199 89% 48%;
+
+  --oracle-blue: 199 89% 48%;
+  --telemetry-violet: 265 89% 66%;
+
+  --agent-running: 142 71% 45%;
+  --agent-idle: 215 16% 47%;
+  --agent-failed: 0 84% 60%;
+  --agent-blocked: 38 92% 50%;
+  --agent-awaiting: 190 90% 50%;
+
+  --context-rules: 270 70% 60%;
+  --context-memories: 217 91% 60%;
+  --context-ast: 186 100% 42%;
+  --context-active: 45 93% 47%;
+  --context-tools: 142 71% 45%;
+
+  --quota-nominal: 142 71% 45%;
+  --quota-warning: 38 92% 50%;
+  --quota-critical: 0 84% 60%;
+  --quota-overflow: 265 89% 66%;
+  --quota-nominal-max: 70;
+  --quota-warning-max: 85;
+  --quota-critical-max: 95;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-surface: hsl(var(--surface));
+  --color-surface-elevated: hsl(var(--surface-elevated));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-ring: hsl(var(--ring));
+
+  --color-oracle-blue: hsl(var(--oracle-blue));
+  --color-telemetry-violet: hsl(var(--telemetry-violet));
+
+  --color-agent-running: hsl(var(--agent-running));
+  --color-agent-idle: hsl(var(--agent-idle));
+  --color-agent-failed: hsl(var(--agent-failed));
+  --color-agent-blocked: hsl(var(--agent-blocked));
+  --color-agent-awaiting: hsl(var(--agent-awaiting));
+
+  --color-context-rules: hsl(var(--context-rules));
+  --color-context-memories: hsl(var(--context-memories));
+  --color-context-ast: hsl(var(--context-ast));
+  --color-context-active: hsl(var(--context-active));
+  --color-context-tools: hsl(var(--context-tools));
+
+  --color-quota-nominal: hsl(var(--quota-nominal));
+  --color-quota-warning: hsl(var(--quota-warning));
+  --color-quota-critical: hsl(var(--quota-critical));
+  --color-quota-overflow: hsl(var(--quota-overflow));
+
+  --spacing-2xs: 0.125rem;
+  --spacing-xs: 0.25rem;
+  --font-sans: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  --animate-pulse-slow: pulse-slow 3s ease-in-out infinite;
+  --animate-radar-sweep: radar-sweep 1.8s ease-out infinite;
+  --animate-gauge-fill: gauge-fill 700ms ease-out both;
+}
+
+@keyframes pulse-slow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes radar-sweep {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.65);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+@keyframes gauge-fill {
+  from {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+
+  to {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
