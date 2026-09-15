@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "cpp",
+    "slug": "cpp",
+    "name": "C++",
+    "purl": {
+      "type": "generic",
+      "name": "cpp",
+      "version": "managed"
+    },
+    "extensions": [".cpp"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-cpp",
+      "slug": "runtime-cpp",
+      "name": "C++ runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-cpp",
+        "version": "managed"
+      },
+      "languageId": "cpp",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-cpp",
+      "slug": "package-manager-cpp",
+      "name": "C++ package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-cpp",
+        "version": "managed"
+      },
+      "languageId": "cpp",
+      "binary": "cpp",
+      "manifestFile": "manifest.json",
+      "installCommand": "cpp install",
+      "addCommand": "cpp add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-cpp",
+      "slug": "category-cpp",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-cpp",
+      "slug": "package-cpp",
+      "name": "C++ package",
+      "purl": {
+        "type": "generic",
+        "name": "package-cpp",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-cpp",
+      "categoryId": "category-cpp",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-cpp",
+      "slug": "package-alt-cpp",
+      "name": "C++ alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-cpp",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-cpp",
+      "categoryId": "category-cpp",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-cpp",
+      "slug": "builder-cpp",
+      "name": "C++ builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-cpp",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "cpp build",
+      "languageIds": ["cpp"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-cpp",
+      "slug": "invariant-cpp",
+      "name": "C++ baseline",
+      "categoryId": "category-cpp",
+      "approvedPackageId": "package-cpp",
+      "bannedPackageId": "package-alt-cpp",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-cpp",
+      "documentableType": "programming_language",
+      "documentableId": "cpp",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

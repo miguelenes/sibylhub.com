@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "go",
+    "slug": "go",
+    "name": "Go",
+    "purl": {
+      "type": "golang",
+      "name": "go",
+      "version": "managed"
+    },
+    "extensions": [".go"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-go",
+      "slug": "runtime-go",
+      "name": "Go runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-go",
+        "version": "managed"
+      },
+      "languageId": "go",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-go",
+      "slug": "package-manager-go",
+      "name": "Go package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-go",
+        "version": "managed"
+      },
+      "languageId": "go",
+      "binary": "go",
+      "manifestFile": "manifest.json",
+      "installCommand": "go install",
+      "addCommand": "go add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-go",
+      "slug": "category-go",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-go",
+      "slug": "package-go",
+      "name": "Go package",
+      "purl": {
+        "type": "generic",
+        "name": "package-go",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-go",
+      "categoryId": "category-go",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-go",
+      "slug": "package-alt-go",
+      "name": "Go alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-go",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-go",
+      "categoryId": "category-go",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-go",
+      "slug": "builder-go",
+      "name": "Go builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-go",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "go build",
+      "languageIds": ["go"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-go",
+      "slug": "invariant-go",
+      "name": "Go baseline",
+      "categoryId": "category-go",
+      "approvedPackageId": "package-go",
+      "bannedPackageId": "package-alt-go",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-go",
+      "documentableType": "programming_language",
+      "documentableId": "go",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

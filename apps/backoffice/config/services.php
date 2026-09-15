@@ -37,6 +37,7 @@ return [
 
     'sibyl' => [
         'publication_target' => env('SIBYL_PUBLICATION_TARGET'),
+        'publication_authorized' => env('SIBYL_PUBLICATION_AUTHORIZED', false),
     ],
 
 ];

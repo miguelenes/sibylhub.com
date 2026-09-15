@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "csharp",
+    "slug": "csharp",
+    "name": "C#",
+    "purl": {
+      "type": "nuget",
+      "name": "csharp",
+      "version": "managed"
+    },
+    "extensions": [".csharp"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-csharp",
+      "slug": "runtime-csharp",
+      "name": "C# runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-csharp",
+        "version": "managed"
+      },
+      "languageId": "csharp",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-csharp",
+      "slug": "package-manager-csharp",
+      "name": "C# package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-csharp",
+        "version": "managed"
+      },
+      "languageId": "csharp",
+      "binary": "csharp",
+      "manifestFile": "manifest.json",
+      "installCommand": "csharp install",
+      "addCommand": "csharp add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-csharp",
+      "slug": "category-csharp",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-csharp",
+      "slug": "package-csharp",
+      "name": "C# package",
+      "purl": {
+        "type": "generic",
+        "name": "package-csharp",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-csharp",
+      "categoryId": "category-csharp",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-csharp",
+      "slug": "package-alt-csharp",
+      "name": "C# alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-csharp",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-csharp",
+      "categoryId": "category-csharp",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-csharp",
+      "slug": "builder-csharp",
+      "name": "C# builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-csharp",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "csharp build",
+      "languageIds": ["csharp"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-csharp",
+      "slug": "invariant-csharp",
+      "name": "C# baseline",
+      "categoryId": "category-csharp",
+      "approvedPackageId": "package-csharp",
+      "bannedPackageId": "package-alt-csharp",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-csharp",
+      "documentableType": "programming_language",
+      "documentableId": "csharp",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

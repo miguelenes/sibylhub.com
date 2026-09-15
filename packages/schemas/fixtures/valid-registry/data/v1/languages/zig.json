@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "zig",
+    "slug": "zig",
+    "name": "Zig",
+    "purl": {
+      "type": "generic",
+      "name": "zig",
+      "version": "managed"
+    },
+    "extensions": [".zig"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-zig",
+      "slug": "runtime-zig",
+      "name": "Zig runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-zig",
+        "version": "managed"
+      },
+      "languageId": "zig",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-zig",
+      "slug": "package-manager-zig",
+      "name": "Zig package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-zig",
+        "version": "managed"
+      },
+      "languageId": "zig",
+      "binary": "zig",
+      "manifestFile": "manifest.json",
+      "installCommand": "zig install",
+      "addCommand": "zig add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-zig",
+      "slug": "category-zig",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-zig",
+      "slug": "package-zig",
+      "name": "Zig package",
+      "purl": {
+        "type": "generic",
+        "name": "package-zig",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-zig",
+      "categoryId": "category-zig",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-zig",
+      "slug": "package-alt-zig",
+      "name": "Zig alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-zig",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-zig",
+      "categoryId": "category-zig",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-zig",
+      "slug": "builder-zig",
+      "name": "Zig builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-zig",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "zig build",
+      "languageIds": ["zig"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-zig",
+      "slug": "invariant-zig",
+      "name": "Zig baseline",
+      "categoryId": "category-zig",
+      "approvedPackageId": "package-zig",
+      "bannedPackageId": "package-alt-zig",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-zig",
+      "documentableType": "programming_language",
+      "documentableId": "zig",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

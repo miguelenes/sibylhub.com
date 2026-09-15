@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "python",
+    "slug": "python",
+    "name": "Python",
+    "purl": {
+      "type": "pypi",
+      "name": "python",
+      "version": "managed"
+    },
+    "extensions": [".python"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-python",
+      "slug": "runtime-python",
+      "name": "Python runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-python",
+        "version": "managed"
+      },
+      "languageId": "python",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-python",
+      "slug": "package-manager-python",
+      "name": "Python package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-python",
+        "version": "managed"
+      },
+      "languageId": "python",
+      "binary": "python",
+      "manifestFile": "manifest.json",
+      "installCommand": "python install",
+      "addCommand": "python add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-python",
+      "slug": "category-python",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-python",
+      "slug": "package-python",
+      "name": "Python package",
+      "purl": {
+        "type": "generic",
+        "name": "package-python",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-python",
+      "categoryId": "category-python",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-python",
+      "slug": "package-alt-python",
+      "name": "Python alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-python",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-python",
+      "categoryId": "category-python",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-python",
+      "slug": "builder-python",
+      "name": "Python builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-python",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "python build",
+      "languageIds": ["python"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-python",
+      "slug": "invariant-python",
+      "name": "Python baseline",
+      "categoryId": "category-python",
+      "approvedPackageId": "package-python",
+      "bannedPackageId": "package-alt-python",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-python",
+      "documentableType": "programming_language",
+      "documentableId": "python",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

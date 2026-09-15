@@ -44,7 +44,7 @@ The environment examples contain shape only. Copy them to local environment file
 | ----------------------- | --------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm dev`              | Turborepo       | Starts package development processes in parallel                                             |
 | `pnpm dev:web`          | `apps/web`      | Starts Astro development on port 4321                                                        |
-| `pnpm dev:backend`      | `apps/backend`  | Starts the Rust API on `127.0.0.1:8787`                                                      |
+| `pnpm dev:backend`      | `apps/backend`  | Starts the Rust API on `0.0.0.0:8080`                                                        |
 | `pnpm build`            | Turborepo       | Builds schemas, design-system, web, backoffice assets, Rust release binaries, and docs       |
 | `pnpm test`             | Turborepo       | Runs local package test suites                                                               |
 | `pnpm test:cov`         | Turborepo       | Runs package coverage tasks and reports unavailable drivers separately                       |

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "typescript",
+    "slug": "typescript",
+    "name": "TypeScript",
+    "purl": {
+      "type": "npm",
+      "name": "typescript",
+      "version": "managed"
+    },
+    "extensions": [".typescript"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-typescript",
+      "slug": "runtime-typescript",
+      "name": "TypeScript runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-typescript",
+        "version": "managed"
+      },
+      "languageId": "typescript",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-typescript",
+      "slug": "package-manager-typescript",
+      "name": "TypeScript package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-typescript",
+        "version": "managed"
+      },
+      "languageId": "typescript",
+      "binary": "typescript",
+      "manifestFile": "manifest.json",
+      "installCommand": "typescript install",
+      "addCommand": "typescript add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-typescript",
+      "slug": "category-typescript",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-typescript",
+      "slug": "package-typescript",
+      "name": "TypeScript package",
+      "purl": {
+        "type": "generic",
+        "name": "package-typescript",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-typescript",
+      "categoryId": "category-typescript",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-typescript",
+      "slug": "package-alt-typescript",
+      "name": "TypeScript alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-typescript",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-typescript",
+      "categoryId": "category-typescript",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-typescript",
+      "slug": "builder-typescript",
+      "name": "TypeScript builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-typescript",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "typescript build",
+      "languageIds": ["typescript"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-typescript",
+      "slug": "invariant-typescript",
+      "name": "TypeScript baseline",
+      "categoryId": "category-typescript",
+      "approvedPackageId": "package-typescript",
+      "bannedPackageId": "package-alt-typescript",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-typescript",
+      "documentableType": "programming_language",
+      "documentableId": "typescript",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

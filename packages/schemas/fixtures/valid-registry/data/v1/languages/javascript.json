@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "javascript",
+    "slug": "javascript",
+    "name": "JavaScript",
+    "purl": {
+      "type": "npm",
+      "name": "javascript",
+      "version": "managed"
+    },
+    "extensions": [".javascript"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-javascript",
+      "slug": "runtime-javascript",
+      "name": "JavaScript runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-javascript",
+        "version": "managed"
+      },
+      "languageId": "javascript",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-javascript",
+      "slug": "package-manager-javascript",
+      "name": "JavaScript package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-javascript",
+        "version": "managed"
+      },
+      "languageId": "javascript",
+      "binary": "javascript",
+      "manifestFile": "manifest.json",
+      "installCommand": "javascript install",
+      "addCommand": "javascript add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-javascript",
+      "slug": "category-javascript",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-javascript",
+      "slug": "package-javascript",
+      "name": "JavaScript package",
+      "purl": {
+        "type": "generic",
+        "name": "package-javascript",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-javascript",
+      "categoryId": "category-javascript",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-javascript",
+      "slug": "package-alt-javascript",
+      "name": "JavaScript alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-javascript",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-javascript",
+      "categoryId": "category-javascript",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-javascript",
+      "slug": "builder-javascript",
+      "name": "JavaScript builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-javascript",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "javascript build",
+      "languageIds": ["javascript"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-javascript",
+      "slug": "invariant-javascript",
+      "name": "JavaScript baseline",
+      "categoryId": "category-javascript",
+      "approvedPackageId": "package-javascript",
+      "bannedPackageId": "package-alt-javascript",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-javascript",
+      "documentableType": "programming_language",
+      "documentableId": "javascript",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

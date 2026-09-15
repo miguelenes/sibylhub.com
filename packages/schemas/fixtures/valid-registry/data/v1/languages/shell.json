@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "shell",
+    "slug": "shell",
+    "name": "Shell",
+    "purl": {
+      "type": "generic",
+      "name": "shell",
+      "version": "managed"
+    },
+    "extensions": [".shell"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-shell",
+      "slug": "runtime-shell",
+      "name": "Shell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-shell",
+        "version": "managed"
+      },
+      "languageId": "shell",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-shell",
+      "slug": "package-manager-shell",
+      "name": "Shell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-shell",
+        "version": "managed"
+      },
+      "languageId": "shell",
+      "binary": "shell",
+      "manifestFile": "manifest.json",
+      "installCommand": "shell install",
+      "addCommand": "shell add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-shell",
+      "slug": "category-shell",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-shell",
+      "slug": "package-shell",
+      "name": "Shell package",
+      "purl": {
+        "type": "generic",
+        "name": "package-shell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-shell",
+      "categoryId": "category-shell",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-shell",
+      "slug": "package-alt-shell",
+      "name": "Shell alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-shell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-shell",
+      "categoryId": "category-shell",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-shell",
+      "slug": "builder-shell",
+      "name": "Shell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-shell",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "shell build",
+      "languageIds": ["shell"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-shell",
+      "slug": "invariant-shell",
+      "name": "Shell baseline",
+      "categoryId": "category-shell",
+      "approvedPackageId": "package-shell",
+      "bannedPackageId": "package-alt-shell",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-shell",
+      "documentableType": "programming_language",
+      "documentableId": "shell",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

@@ -1,0 +1,283 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "languages": [
+    {
+      "id": "c",
+      "slug": "c",
+      "name": "C",
+      "path": "languages/c.json"
+    },
+    {
+      "id": "cpp",
+      "slug": "cpp",
+      "name": "C++",
+      "path": "languages/cpp.json"
+    },
+    {
+      "id": "csharp",
+      "slug": "csharp",
+      "name": "C#",
+      "path": "languages/csharp.json"
+    },
+    {
+      "id": "dart",
+      "slug": "dart",
+      "name": "Dart",
+      "path": "languages/dart.json"
+    },
+    {
+      "id": "elixir",
+      "slug": "elixir",
+      "name": "Elixir",
+      "path": "languages/elixir.json"
+    },
+    {
+      "id": "go",
+      "slug": "go",
+      "name": "Go",
+      "path": "languages/go.json"
+    },
+    {
+      "id": "haskell",
+      "slug": "haskell",
+      "name": "Haskell",
+      "path": "languages/haskell.json"
+    },
+    {
+      "id": "java",
+      "slug": "java",
+      "name": "Java",
+      "path": "languages/java.json"
+    },
+    {
+      "id": "javascript",
+      "slug": "javascript",
+      "name": "JavaScript",
+      "path": "languages/javascript.json"
+    },
+    {
+      "id": "kotlin",
+      "slug": "kotlin",
+      "name": "Kotlin",
+      "path": "languages/kotlin.json"
+    },
+    {
+      "id": "lua",
+      "slug": "lua",
+      "name": "Lua",
+      "path": "languages/lua.json"
+    },
+    {
+      "id": "objective-c",
+      "slug": "objective-c",
+      "name": "Objective-C",
+      "path": "languages/objective-c.json"
+    },
+    {
+      "id": "perl",
+      "slug": "perl",
+      "name": "Perl",
+      "path": "languages/perl.json"
+    },
+    {
+      "id": "php",
+      "slug": "php",
+      "name": "PHP",
+      "path": "languages/php.json"
+    },
+    {
+      "id": "python",
+      "slug": "python",
+      "name": "Python",
+      "path": "languages/python.json"
+    },
+    {
+      "id": "r",
+      "slug": "r",
+      "name": "R",
+      "path": "languages/r.json"
+    },
+    {
+      "id": "ruby",
+      "slug": "ruby",
+      "name": "Ruby",
+      "path": "languages/ruby.json"
+    },
+    {
+      "id": "rust",
+      "slug": "rust",
+      "name": "Rust",
+      "path": "languages/rust.json"
+    },
+    {
+      "id": "scala",
+      "slug": "scala",
+      "name": "Scala",
+      "path": "languages/scala.json"
+    },
+    {
+      "id": "swift",
+      "slug": "swift",
+      "name": "Swift",
+      "path": "languages/swift.json"
+    },
+    {
+      "id": "typescript",
+      "slug": "typescript",
+      "name": "TypeScript",
+      "path": "languages/typescript.json"
+    },
+    {
+      "id": "zig",
+      "slug": "zig",
+      "name": "Zig",
+      "path": "languages/zig.json"
+    },
+    {
+      "id": "shell",
+      "slug": "shell",
+      "name": "Shell",
+      "path": "languages/shell.json"
+    },
+    {
+      "id": "powershell",
+      "slug": "powershell",
+      "name": "PowerShell",
+      "path": "languages/powershell.json"
+    },
+    {
+      "id": "sql",
+      "slug": "sql",
+      "name": "SQL",
+      "path": "languages/sql.json"
+    }
+  ],
+  "builders": [
+    {
+      "id": "builder-c",
+      "slug": "builder-c",
+      "name": "C builder"
+    },
+    {
+      "id": "builder-cpp",
+      "slug": "builder-cpp",
+      "name": "C++ builder"
+    },
+    {
+      "id": "builder-csharp",
+      "slug": "builder-csharp",
+      "name": "C# builder"
+    },
+    {
+      "id": "builder-dart",
+      "slug": "builder-dart",
+      "name": "Dart builder"
+    },
+    {
+      "id": "builder-elixir",
+      "slug": "builder-elixir",
+      "name": "Elixir builder"
+    },
+    {
+      "id": "builder-go",
+      "slug": "builder-go",
+      "name": "Go builder"
+    },
+    {
+      "id": "builder-haskell",
+      "slug": "builder-haskell",
+      "name": "Haskell builder"
+    },
+    {
+      "id": "builder-java",
+      "slug": "builder-java",
+      "name": "Java builder"
+    },
+    {
+      "id": "builder-javascript",
+      "slug": "builder-javascript",
+      "name": "JavaScript builder"
+    },
+    {
+      "id": "builder-kotlin",
+      "slug": "builder-kotlin",
+      "name": "Kotlin builder"
+    },
+    {
+      "id": "builder-lua",
+      "slug": "builder-lua",
+      "name": "Lua builder"
+    },
+    {
+      "id": "builder-objective-c",
+      "slug": "builder-objective-c",
+      "name": "Objective-C builder"
+    },
+    {
+      "id": "builder-perl",
+      "slug": "builder-perl",
+      "name": "Perl builder"
+    },
+    {
+      "id": "builder-php",
+      "slug": "builder-php",
+      "name": "PHP builder"
+    },
+    {
+      "id": "builder-python",
+      "slug": "builder-python",
+      "name": "Python builder"
+    },
+    {
+      "id": "builder-r",
+      "slug": "builder-r",
+      "name": "R builder"
+    },
+    {
+      "id": "builder-ruby",
+      "slug": "builder-ruby",
+      "name": "Ruby builder"
+    },
+    {
+      "id": "builder-rust",
+      "slug": "builder-rust",
+      "name": "Rust builder"
+    },
+    {
+      "id": "builder-scala",
+      "slug": "builder-scala",
+      "name": "Scala builder"
+    },
+    {
+      "id": "builder-swift",
+      "slug": "builder-swift",
+      "name": "Swift builder"
+    },
+    {
+      "id": "builder-typescript",
+      "slug": "builder-typescript",
+      "name": "TypeScript builder"
+    },
+    {
+      "id": "builder-zig",
+      "slug": "builder-zig",
+      "name": "Zig builder"
+    },
+    {
+      "id": "builder-shell",
+      "slug": "builder-shell",
+      "name": "Shell builder"
+    },
+    {
+      "id": "builder-powershell",
+      "slug": "builder-powershell",
+      "name": "PowerShell builder"
+    },
+    {
+      "id": "builder-sql",
+      "slug": "builder-sql",
+      "name": "SQL builder"
+    }
+  ]
+}

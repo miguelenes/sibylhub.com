@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "dart",
+    "slug": "dart",
+    "name": "Dart",
+    "purl": {
+      "type": "pub",
+      "name": "dart",
+      "version": "managed"
+    },
+    "extensions": [".dart"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-dart",
+      "slug": "runtime-dart",
+      "name": "Dart runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-dart",
+        "version": "managed"
+      },
+      "languageId": "dart",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-dart",
+      "slug": "package-manager-dart",
+      "name": "Dart package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-dart",
+        "version": "managed"
+      },
+      "languageId": "dart",
+      "binary": "dart",
+      "manifestFile": "manifest.json",
+      "installCommand": "dart install",
+      "addCommand": "dart add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-dart",
+      "slug": "category-dart",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-dart",
+      "slug": "package-dart",
+      "name": "Dart package",
+      "purl": {
+        "type": "generic",
+        "name": "package-dart",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-dart",
+      "categoryId": "category-dart",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-dart",
+      "slug": "package-alt-dart",
+      "name": "Dart alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-dart",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-dart",
+      "categoryId": "category-dart",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-dart",
+      "slug": "builder-dart",
+      "name": "Dart builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-dart",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "dart build",
+      "languageIds": ["dart"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-dart",
+      "slug": "invariant-dart",
+      "name": "Dart baseline",
+      "categoryId": "category-dart",
+      "approvedPackageId": "package-dart",
+      "bannedPackageId": "package-alt-dart",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-dart",
+      "documentableType": "programming_language",
+      "documentableId": "dart",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

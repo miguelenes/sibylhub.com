@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "powershell",
+    "slug": "powershell",
+    "name": "PowerShell",
+    "purl": {
+      "type": "nuget",
+      "name": "powershell",
+      "version": "managed"
+    },
+    "extensions": [".powershell"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-powershell",
+      "slug": "runtime-powershell",
+      "name": "PowerShell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-powershell",
+        "version": "managed"
+      },
+      "languageId": "powershell",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-powershell",
+      "slug": "package-manager-powershell",
+      "name": "PowerShell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-powershell",
+        "version": "managed"
+      },
+      "languageId": "powershell",
+      "binary": "powershell",
+      "manifestFile": "manifest.json",
+      "installCommand": "powershell install",
+      "addCommand": "powershell add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-powershell",
+      "slug": "category-powershell",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-powershell",
+      "slug": "package-powershell",
+      "name": "PowerShell package",
+      "purl": {
+        "type": "generic",
+        "name": "package-powershell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-powershell",
+      "categoryId": "category-powershell",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-powershell",
+      "slug": "package-alt-powershell",
+      "name": "PowerShell alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-powershell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-powershell",
+      "categoryId": "category-powershell",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-powershell",
+      "slug": "builder-powershell",
+      "name": "PowerShell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-powershell",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "powershell build",
+      "languageIds": ["powershell"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-powershell",
+      "slug": "invariant-powershell",
+      "name": "PowerShell baseline",
+      "categoryId": "category-powershell",
+      "approvedPackageId": "package-powershell",
+      "bannedPackageId": "package-alt-powershell",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-powershell",
+      "documentableType": "programming_language",
+      "documentableId": "powershell",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

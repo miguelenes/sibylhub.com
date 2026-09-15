@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "r",
+    "slug": "r",
+    "name": "R",
+    "purl": {
+      "type": "cran",
+      "name": "r",
+      "version": "managed"
+    },
+    "extensions": [".r"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-r",
+      "slug": "runtime-r",
+      "name": "R runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-r",
+        "version": "managed"
+      },
+      "languageId": "r",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-r",
+      "slug": "package-manager-r",
+      "name": "R package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-r",
+        "version": "managed"
+      },
+      "languageId": "r",
+      "binary": "r",
+      "manifestFile": "manifest.json",
+      "installCommand": "r install",
+      "addCommand": "r add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-r",
+      "slug": "category-r",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-r",
+      "slug": "package-r",
+      "name": "R package",
+      "purl": {
+        "type": "generic",
+        "name": "package-r",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-r",
+      "categoryId": "category-r",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-r",
+      "slug": "package-alt-r",
+      "name": "R alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-r",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-r",
+      "categoryId": "category-r",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-r",
+      "slug": "builder-r",
+      "name": "R builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-r",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "r build",
+      "languageIds": ["r"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-r",
+      "slug": "invariant-r",
+      "name": "R baseline",
+      "categoryId": "category-r",
+      "approvedPackageId": "package-r",
+      "bannedPackageId": "package-alt-r",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-r",
+      "documentableType": "programming_language",
+      "documentableId": "r",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

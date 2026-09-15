@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "scala",
+    "slug": "scala",
+    "name": "Scala",
+    "purl": {
+      "type": "maven",
+      "name": "scala",
+      "version": "managed"
+    },
+    "extensions": [".scala"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-scala",
+      "slug": "runtime-scala",
+      "name": "Scala runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-scala",
+        "version": "managed"
+      },
+      "languageId": "scala",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-scala",
+      "slug": "package-manager-scala",
+      "name": "Scala package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-scala",
+        "version": "managed"
+      },
+      "languageId": "scala",
+      "binary": "scala",
+      "manifestFile": "manifest.json",
+      "installCommand": "scala install",
+      "addCommand": "scala add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-scala",
+      "slug": "category-scala",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-scala",
+      "slug": "package-scala",
+      "name": "Scala package",
+      "purl": {
+        "type": "generic",
+        "name": "package-scala",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-scala",
+      "categoryId": "category-scala",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-scala",
+      "slug": "package-alt-scala",
+      "name": "Scala alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-scala",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-scala",
+      "categoryId": "category-scala",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-scala",
+      "slug": "builder-scala",
+      "name": "Scala builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-scala",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "scala build",
+      "languageIds": ["scala"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-scala",
+      "slug": "invariant-scala",
+      "name": "Scala baseline",
+      "categoryId": "category-scala",
+      "approvedPackageId": "package-scala",
+      "bannedPackageId": "package-alt-scala",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-scala",
+      "documentableType": "programming_language",
+      "documentableId": "scala",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

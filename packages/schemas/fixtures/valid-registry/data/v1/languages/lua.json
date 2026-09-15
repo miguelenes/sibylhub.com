@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "lua",
+    "slug": "lua",
+    "name": "Lua",
+    "purl": {
+      "type": "generic",
+      "name": "lua",
+      "version": "managed"
+    },
+    "extensions": [".lua"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-lua",
+      "slug": "runtime-lua",
+      "name": "Lua runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-lua",
+        "version": "managed"
+      },
+      "languageId": "lua",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-lua",
+      "slug": "package-manager-lua",
+      "name": "Lua package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-lua",
+        "version": "managed"
+      },
+      "languageId": "lua",
+      "binary": "lua",
+      "manifestFile": "manifest.json",
+      "installCommand": "lua install",
+      "addCommand": "lua add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-lua",
+      "slug": "category-lua",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-lua",
+      "slug": "package-lua",
+      "name": "Lua package",
+      "purl": {
+        "type": "generic",
+        "name": "package-lua",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-lua",
+      "categoryId": "category-lua",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-lua",
+      "slug": "package-alt-lua",
+      "name": "Lua alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-lua",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-lua",
+      "categoryId": "category-lua",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-lua",
+      "slug": "builder-lua",
+      "name": "Lua builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-lua",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "lua build",
+      "languageIds": ["lua"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-lua",
+      "slug": "invariant-lua",
+      "name": "Lua baseline",
+      "categoryId": "category-lua",
+      "approvedPackageId": "package-lua",
+      "bannedPackageId": "package-alt-lua",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-lua",
+      "documentableType": "programming_language",
+      "documentableId": "lua",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

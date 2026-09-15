@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "sql",
+    "slug": "sql",
+    "name": "SQL",
+    "purl": {
+      "type": "generic",
+      "name": "sql",
+      "version": "managed"
+    },
+    "extensions": [".sql"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-sql",
+      "slug": "runtime-sql",
+      "name": "SQL runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-sql",
+        "version": "managed"
+      },
+      "languageId": "sql",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-sql",
+      "slug": "package-manager-sql",
+      "name": "SQL package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-sql",
+        "version": "managed"
+      },
+      "languageId": "sql",
+      "binary": "sql",
+      "manifestFile": "manifest.json",
+      "installCommand": "sql install",
+      "addCommand": "sql add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-sql",
+      "slug": "category-sql",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-sql",
+      "slug": "package-sql",
+      "name": "SQL package",
+      "purl": {
+        "type": "generic",
+        "name": "package-sql",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-sql",
+      "categoryId": "category-sql",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-sql",
+      "slug": "package-alt-sql",
+      "name": "SQL alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-sql",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-sql",
+      "categoryId": "category-sql",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-sql",
+      "slug": "builder-sql",
+      "name": "SQL builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-sql",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "sql build",
+      "languageIds": ["sql"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-sql",
+      "slug": "invariant-sql",
+      "name": "SQL baseline",
+      "categoryId": "category-sql",
+      "approvedPackageId": "package-sql",
+      "bannedPackageId": "package-alt-sql",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-sql",
+      "documentableType": "programming_language",
+      "documentableId": "sql",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

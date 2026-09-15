@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "elixir",
+    "slug": "elixir",
+    "name": "Elixir",
+    "purl": {
+      "type": "hex",
+      "name": "elixir",
+      "version": "managed"
+    },
+    "extensions": [".elixir"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-elixir",
+      "slug": "runtime-elixir",
+      "name": "Elixir runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-elixir",
+        "version": "managed"
+      },
+      "languageId": "elixir",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-elixir",
+      "slug": "package-manager-elixir",
+      "name": "Elixir package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-elixir",
+        "version": "managed"
+      },
+      "languageId": "elixir",
+      "binary": "elixir",
+      "manifestFile": "manifest.json",
+      "installCommand": "elixir install",
+      "addCommand": "elixir add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-elixir",
+      "slug": "category-elixir",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-elixir",
+      "slug": "package-elixir",
+      "name": "Elixir package",
+      "purl": {
+        "type": "generic",
+        "name": "package-elixir",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-elixir",
+      "categoryId": "category-elixir",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-elixir",
+      "slug": "package-alt-elixir",
+      "name": "Elixir alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-elixir",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-elixir",
+      "categoryId": "category-elixir",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-elixir",
+      "slug": "builder-elixir",
+      "name": "Elixir builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-elixir",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "elixir build",
+      "languageIds": ["elixir"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-elixir",
+      "slug": "invariant-elixir",
+      "name": "Elixir baseline",
+      "categoryId": "category-elixir",
+      "approvedPackageId": "package-elixir",
+      "bannedPackageId": "package-alt-elixir",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-elixir",
+      "documentableType": "programming_language",
+      "documentableId": "elixir",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

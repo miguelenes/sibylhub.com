@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "rust",
+    "slug": "rust",
+    "name": "Rust",
+    "purl": {
+      "type": "cargo",
+      "name": "rust",
+      "version": "managed"
+    },
+    "extensions": [".rust"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-rust",
+      "slug": "runtime-rust",
+      "name": "Rust runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-rust",
+        "version": "managed"
+      },
+      "languageId": "rust",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-rust",
+      "slug": "package-manager-rust",
+      "name": "Rust package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-rust",
+        "version": "managed"
+      },
+      "languageId": "rust",
+      "binary": "rust",
+      "manifestFile": "manifest.json",
+      "installCommand": "rust install",
+      "addCommand": "rust add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-rust",
+      "slug": "category-rust",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-rust",
+      "slug": "package-rust",
+      "name": "Rust package",
+      "purl": {
+        "type": "generic",
+        "name": "package-rust",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-rust",
+      "categoryId": "category-rust",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-rust",
+      "slug": "package-alt-rust",
+      "name": "Rust alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-rust",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-rust",
+      "categoryId": "category-rust",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-rust",
+      "slug": "builder-rust",
+      "name": "Rust builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-rust",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "rust build",
+      "languageIds": ["rust"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-rust",
+      "slug": "invariant-rust",
+      "name": "Rust baseline",
+      "categoryId": "category-rust",
+      "approvedPackageId": "package-rust",
+      "bannedPackageId": "package-alt-rust",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-rust",
+      "documentableType": "programming_language",
+      "documentableId": "rust",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

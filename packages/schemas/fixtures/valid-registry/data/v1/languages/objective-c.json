@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "objective-c",
+    "slug": "objective-c",
+    "name": "Objective-C",
+    "purl": {
+      "type": "generic",
+      "name": "objective-c",
+      "version": "managed"
+    },
+    "extensions": [".objective-c"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-objective-c",
+      "slug": "runtime-objective-c",
+      "name": "Objective-C runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-objective-c",
+        "version": "managed"
+      },
+      "languageId": "objective-c",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-objective-c",
+      "slug": "package-manager-objective-c",
+      "name": "Objective-C package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-objective-c",
+        "version": "managed"
+      },
+      "languageId": "objective-c",
+      "binary": "objective-c",
+      "manifestFile": "manifest.json",
+      "installCommand": "objective-c install",
+      "addCommand": "objective-c add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-objective-c",
+      "slug": "category-objective-c",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-objective-c",
+      "slug": "package-objective-c",
+      "name": "Objective-C package",
+      "purl": {
+        "type": "generic",
+        "name": "package-objective-c",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-objective-c",
+      "categoryId": "category-objective-c",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-objective-c",
+      "slug": "package-alt-objective-c",
+      "name": "Objective-C alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-objective-c",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-objective-c",
+      "categoryId": "category-objective-c",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-objective-c",
+      "slug": "builder-objective-c",
+      "name": "Objective-C builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-objective-c",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "objective-c build",
+      "languageIds": ["objective-c"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-objective-c",
+      "slug": "invariant-objective-c",
+      "name": "Objective-C baseline",
+      "categoryId": "category-objective-c",
+      "approvedPackageId": "package-objective-c",
+      "bannedPackageId": "package-alt-objective-c",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-objective-c",
+      "documentableType": "programming_language",
+      "documentableId": "objective-c",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

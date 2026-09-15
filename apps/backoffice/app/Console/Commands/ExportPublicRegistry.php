@@ -2,24 +2,20 @@
 
 namespace App\Console\Commands;
 
-use App\Models\RegistryRevision;
-use App\Services\RegistryExportService;
+use App\Services\NormalizedRegistryExportService;
 use Illuminate\Console\Command;
 use Throwable;
 
 class ExportPublicRegistry extends Command
 {
-    protected $signature = 'registry:export-public {--revision= : Stable revision identifier}';
+    protected $signature = 'registry:export-public';
 
-    protected $description = 'Export a validated registry revision to the local R2-compatible tree';
+    protected $description = 'Export the normalized registry to the local revision-scoped tree';
 
-    public function handle(RegistryExportService $exports): int
+    public function handle(NormalizedRegistryExportService $exports): int
     {
         try {
-            $revision = $this->option('revision')
-                ? RegistryRevision::query()->where('stable_id', $this->option('revision'))->firstOrFail()
-                : null;
-            $result = $exports->export($revision);
+            $result = $exports->export();
             $this->line(json_encode([
                 'status' => 'exported',
                 'revision' => $result['revision'],

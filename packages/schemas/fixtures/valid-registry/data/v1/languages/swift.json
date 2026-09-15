@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "swift",
+    "slug": "swift",
+    "name": "Swift",
+    "purl": {
+      "type": "generic",
+      "name": "swift",
+      "version": "managed"
+    },
+    "extensions": [".swift"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-swift",
+      "slug": "runtime-swift",
+      "name": "Swift runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-swift",
+        "version": "managed"
+      },
+      "languageId": "swift",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-swift",
+      "slug": "package-manager-swift",
+      "name": "Swift package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-swift",
+        "version": "managed"
+      },
+      "languageId": "swift",
+      "binary": "swift",
+      "manifestFile": "manifest.json",
+      "installCommand": "swift install",
+      "addCommand": "swift add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-swift",
+      "slug": "category-swift",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-swift",
+      "slug": "package-swift",
+      "name": "Swift package",
+      "purl": {
+        "type": "generic",
+        "name": "package-swift",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-swift",
+      "categoryId": "category-swift",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-swift",
+      "slug": "package-alt-swift",
+      "name": "Swift alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-swift",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-swift",
+      "categoryId": "category-swift",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-swift",
+      "slug": "builder-swift",
+      "name": "Swift builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-swift",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "swift build",
+      "languageIds": ["swift"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-swift",
+      "slug": "invariant-swift",
+      "name": "Swift baseline",
+      "categoryId": "category-swift",
+      "approvedPackageId": "package-swift",
+      "bannedPackageId": "package-alt-swift",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-swift",
+      "documentableType": "programming_language",
+      "documentableId": "swift",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

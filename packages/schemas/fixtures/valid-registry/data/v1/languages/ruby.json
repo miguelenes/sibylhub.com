@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "ruby",
+    "slug": "ruby",
+    "name": "Ruby",
+    "purl": {
+      "type": "gem",
+      "name": "ruby",
+      "version": "managed"
+    },
+    "extensions": [".ruby"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-ruby",
+      "slug": "runtime-ruby",
+      "name": "Ruby runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-ruby",
+        "version": "managed"
+      },
+      "languageId": "ruby",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-ruby",
+      "slug": "package-manager-ruby",
+      "name": "Ruby package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-ruby",
+        "version": "managed"
+      },
+      "languageId": "ruby",
+      "binary": "ruby",
+      "manifestFile": "manifest.json",
+      "installCommand": "ruby install",
+      "addCommand": "ruby add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-ruby",
+      "slug": "category-ruby",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-ruby",
+      "slug": "package-ruby",
+      "name": "Ruby package",
+      "purl": {
+        "type": "generic",
+        "name": "package-ruby",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-ruby",
+      "categoryId": "category-ruby",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-ruby",
+      "slug": "package-alt-ruby",
+      "name": "Ruby alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-ruby",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-ruby",
+      "categoryId": "category-ruby",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-ruby",
+      "slug": "builder-ruby",
+      "name": "Ruby builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-ruby",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "ruby build",
+      "languageIds": ["ruby"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-ruby",
+      "slug": "invariant-ruby",
+      "name": "Ruby baseline",
+      "categoryId": "category-ruby",
+      "approvedPackageId": "package-ruby",
+      "bannedPackageId": "package-alt-ruby",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-ruby",
+      "documentableType": "programming_language",
+      "documentableId": "ruby",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

@@ -1,4 +1,8 @@
-import type { EcosystemDocument, InvariantRule } from "./types.js";
+import type {
+  LegacyEcosystemDocument,
+  LegacyInvariantRule,
+  RegistryArtifactSet,
+} from "./types.js";
 
 export const languageNames = [
   ["c", "C"],
@@ -27,7 +31,6 @@ export const languageNames = [
   ["powershell", "PowerShell"],
   ["sql", "SQL"],
 ] as const;
-
 export const purlTypes: Record<string, string> = {
   c: "generic",
   cpp: "generic",
@@ -55,18 +58,17 @@ export const purlTypes: Record<string, string> = {
   powershell: "nuget",
   sql: "generic",
 };
-
-const entry = (id: string, name: string, kind: string) => ({
+export const languageIdentities = languageNames.map(([id]) => id);
+const legacyEntry = (id: string, name: string, type = "generic") => ({
   id,
   name,
-  purl: { type: kind, name: id, version: "managed" },
+  purl: { type, name: id, version: "managed" },
 });
-
-export const validEcosystem: EcosystemDocument = {
+export const validLegacyEcosystem: LegacyEcosystemDocument = {
   schemaVersion: "1.0",
   revisionId: "local-bootstrap-1",
   languages: languageNames.map(([id, name]) => ({
-    ...entry(id, name, purlTypes[id]),
+    ...legacyEntry(id, name, purlTypes[id]),
     runtimeId: `runtime-${id}`,
     packageManagerId: `package-manager-${id}`,
     lockfileId: `lockfile-${id}`,
@@ -75,18 +77,18 @@ export const validEcosystem: EcosystemDocument = {
     documentationId: `docs-${id}`,
   })),
   runtimes: languageNames.map(([id, name]) =>
-    entry(`runtime-${id}`, `${name} runtime`, "generic"),
+    legacyEntry(`runtime-${id}`, `${name} runtime`),
   ),
   packageManagers: languageNames.map(([id, name]) =>
-    entry(`package-manager-${id}`, `${name} package manager`, "generic"),
+    legacyEntry(`package-manager-${id}`, `${name} package manager`),
   ),
   lockfiles: languageNames.map(([id, name]) =>
-    entry(`lockfile-${id}`, `${name} lockfile`, "generic"),
+    legacyEntry(`lockfile-${id}`, `${name} lockfile`),
   ),
   builders: languageNames.map(([id, name]) =>
-    entry(`builder-${id}`, `${name} builder`, "generic"),
+    legacyEntry(`builder-${id}`, `${name} builder`),
   ),
-  invariants: languageNames.map(([id, name]): InvariantRule => ({
+  invariants: languageNames.map(([id, name]): LegacyInvariantRule => ({
     id: `invariant-${id}`,
     name: `${name} baseline`,
     languageId: id,
@@ -99,13 +101,125 @@ export const validEcosystem: EcosystemDocument = {
     title: `${name} ecosystem`,
   })),
 };
-
-export const languageIdentities = languageNames.map(([id]) => id);
-
+export const validEcosystem = validLegacyEcosystem;
+const stable = (id: string, slug: string, name: string, type = "generic") => ({
+  id,
+  slug,
+  name,
+  purl: { type, name: slug, version: "managed" },
+});
+export const validRegistry: RegistryArtifactSet = (() => {
+  const revisionId = "sha256:" + "0".repeat(64);
+  const languages = Object.fromEntries(
+    languageNames.map(([slug, name]) => {
+      const language = {
+        ...stable(slug, slug, name, purlTypes[slug]),
+        extensions: [`.${slug}`],
+      };
+      const runtime = {
+        ...stable(`runtime-${slug}`, `runtime-${slug}`, `${name} runtime`),
+        languageId: slug,
+        engineType: "interpreter",
+      };
+      const manager = {
+        ...stable(
+          `package-manager-${slug}`,
+          `package-manager-${slug}`,
+          `${name} package manager`,
+        ),
+        languageId: slug,
+        binary: slug,
+        manifestFile: "manifest.json",
+        installCommand: `${slug} install`,
+        addCommand: `${slug} add`,
+      };
+      const category = {
+        id: `category-${slug}`,
+        slug: `category-${slug}`,
+        name: "Recommended",
+      };
+      const pkg = {
+        ...stable(`package-${slug}`, `package-${slug}`, `${name} package`),
+        packageManagerId: manager.id,
+        categoryId: category.id,
+        opinionated: true,
+      };
+      const alternate = {
+        ...stable(
+          `package-alt-${slug}`,
+          `package-alt-${slug}`,
+          `${name} alternate package`,
+        ),
+        packageManagerId: manager.id,
+        categoryId: category.id,
+        opinionated: false,
+      };
+      const invariant = {
+        id: `invariant-${slug}`,
+        slug: `invariant-${slug}`,
+        name: `${name} baseline`,
+        categoryId: category.id,
+        approvedPackageId: pkg.id,
+        bannedPackageId: alternate.id,
+        severity: "warning",
+        reason: "Use the managed package contract.",
+      };
+      const builder = {
+        ...stable(`builder-${slug}`, `builder-${slug}`, `${name} builder`),
+        configurationFiles: ["manifest.json"],
+        runCommand: `${slug} build`,
+        languageIds: [slug],
+      };
+      const documentation = {
+        id: `docs-${slug}`,
+        documentableType: "programming_language",
+        documentableId: slug,
+        contentHash: "sha256:" + "0".repeat(64),
+        tokenCount: 1,
+      };
+      return [
+        slug,
+        {
+          schemaVersion: "2.0" as const,
+          revisionId,
+          language,
+          runtimes: [runtime],
+          packageRegistries: [],
+          packageManagers: [manager],
+          lockfileSpecifications: [],
+          workspaceConfigurations: [],
+          packageCategories: [category],
+          packages: [pkg, alternate],
+          compatibilities: [],
+          builders: [builder],
+          invariants: [invariant],
+          documentations: [documentation],
+          documentationChunks: [],
+        },
+      ];
+    }),
+  );
+  const index = {
+    schemaVersion: "2.0" as const,
+    revisionId,
+    languages: languageNames.map(([slug, name]) => ({
+      id: slug,
+      slug,
+      name,
+      path: `languages/${slug}.json`,
+    })),
+    builders: languageNames.map(([slug, name]) => ({
+      id: `builder-${slug}`,
+      slug: `builder-${slug}`,
+      name: `${name} builder`,
+    })),
+  };
+  return { index, languages };
+})();
 export function invariantForLanguage(
   languageId: string,
-): InvariantRule | undefined {
-  return validEcosystem.invariants.find(
+): LegacyInvariantRule | undefined {
+  return validLegacyEcosystem.invariants.find(
     (invariant) => invariant.languageId === languageId,
   );
 }

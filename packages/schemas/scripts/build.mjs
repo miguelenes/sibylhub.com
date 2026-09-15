@@ -386,6 +386,261 @@ await writeFile(
   '{"schemaVersion":"1.0","languages":[\n',
 );
 
+// The current contract is a revision-scoped split tree. Keep the legacy
+// fixture above available for migration/import tests, but generate the 2.0
+// tree independently so it cannot accidentally inherit the old payload shape.
+const revisionId = `sha256:${"0".repeat(64)}`;
+const stable = (id, slug, name, type = "generic") => ({
+  id,
+  slug,
+  name,
+  purl: { type, name: slug, version: "managed" },
+});
+const validRegistry = {
+  index: {
+    schemaVersion: "2.0",
+    revisionId,
+    languages: languages.map(([slug, name]) => ({
+      id: slug,
+      slug,
+      name,
+      path: `languages/${slug}.json`,
+    })),
+    builders: languages.map(([slug, name]) => ({
+      id: `builder-${slug}`,
+      slug: `builder-${slug}`,
+      name: `${name} builder`,
+    })),
+  },
+  languages: Object.fromEntries(
+    languages.map(([slug, name, purlType]) => {
+      const language = {
+        ...stable(slug, slug, name, purlType),
+        extensions: [`.${slug}`],
+      };
+      const runtime = {
+        ...stable(`runtime-${slug}`, `runtime-${slug}`, `${name} runtime`),
+        languageId: slug,
+        engineType: "interpreter",
+      };
+      const manager = {
+        ...stable(
+          `package-manager-${slug}`,
+          `package-manager-${slug}`,
+          `${name} package manager`,
+        ),
+        languageId: slug,
+        binary: slug,
+        manifestFile: "manifest.json",
+        installCommand: `${slug} install`,
+        addCommand: `${slug} add`,
+      };
+      const category = {
+        id: `category-${slug}`,
+        slug: `category-${slug}`,
+        name: "Recommended",
+      };
+      const packageRecord = {
+        ...stable(`package-${slug}`, `package-${slug}`, `${name} package`),
+        packageManagerId: manager.id,
+        categoryId: category.id,
+        opinionated: true,
+      };
+      const alternatePackage = {
+        ...stable(
+          `package-alt-${slug}`,
+          `package-alt-${slug}`,
+          `${name} alternate package`,
+        ),
+        packageManagerId: manager.id,
+        categoryId: category.id,
+        opinionated: false,
+      };
+      return [
+        slug,
+        {
+          schemaVersion: "2.0",
+          revisionId,
+          language,
+          runtimes: [runtime],
+          packageRegistries: [],
+          packageManagers: [manager],
+          lockfileSpecifications: [],
+          workspaceConfigurations: [],
+          packageCategories: [category],
+          packages: [packageRecord, alternatePackage],
+          compatibilities: [],
+          builders: [
+            {
+              ...stable(
+                `builder-${slug}`,
+                `builder-${slug}`,
+                `${name} builder`,
+              ),
+              configurationFiles: ["manifest.json"],
+              runCommand: `${slug} build`,
+              languageIds: [slug],
+            },
+          ],
+          invariants: [
+            {
+              id: `invariant-${slug}`,
+              slug: `invariant-${slug}`,
+              name: `${name} baseline`,
+              categoryId: category.id,
+              approvedPackageId: packageRecord.id,
+              bannedPackageId: alternatePackage.id,
+              severity: "warning",
+              reason: "Use the managed package contract.",
+            },
+          ],
+          documentations: [
+            {
+              id: `docs-${slug}`,
+              documentableType: "programming_language",
+              documentableId: slug,
+              contentHash: `sha256:${"0".repeat(64)}`,
+              tokenCount: 1,
+            },
+          ],
+          documentationChunks: [],
+        },
+      ];
+    }),
+  ),
+};
+const purl2 = {
+  type: "object",
+  required: ["type", "name", "version"],
+  properties: {
+    type: { type: "string", pattern: "^[a-z0-9][a-z0-9.+-]*$" },
+    namespace: { type: "string", minLength: 1 },
+    name: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    version: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    qualifiers: { type: "object", additionalProperties: { type: "string" } },
+    subpath: { type: "string", minLength: 1, pattern: "^\\S+$" },
+  },
+  additionalProperties: false,
+};
+const stable2 = {
+  type: "object",
+  required: ["id", "slug", "name", "purl"],
+  properties: {
+    id: stringId,
+    slug: { type: "string", pattern: "^[a-z0-9][a-z0-9-]*$" },
+    name: stringId,
+    purl: purl2,
+  },
+  additionalProperties: false,
+};
+const registryIndex2 = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/ecosystem/2.0/index",
+  title: "SibylHub normalized ecosystem index",
+  type: "object",
+  required: ["schemaVersion", "revisionId", "languages", "builders"],
+  properties: {
+    schemaVersion: { const: "2.0" },
+    revisionId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+    languages: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: {
+        type: "object",
+        required: ["id", "slug", "name", "path"],
+        properties: {
+          id: stringId,
+          slug: stringId,
+          name: stringId,
+          path: {
+            type: "string",
+            pattern: "^languages/[a-z0-9][a-z0-9-]*\\.json$",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    builders: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "slug", "name"],
+        properties: { id: stringId, slug: stringId, name: stringId },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
+const artifactCollections = {
+  runtimes: { type: "array", items: stable2 },
+  packageRegistries: { type: "array", items: stable2 },
+  packageManagers: { type: "array", items: stable2 },
+  lockfileSpecifications: { type: "array", items: stable2 },
+  workspaceConfigurations: { type: "array", items: stable2 },
+  packageCategories: { type: "array", items: { type: "object" } },
+  packages: { type: "array", items: stable2 },
+  compatibilities: { type: "array", items: { type: "object" } },
+  builders: { type: "array", items: stable2 },
+  invariants: { type: "array", items: { type: "object" } },
+  documentations: { type: "array", items: { type: "object" } },
+  documentationChunks: { type: "array", items: { type: "object" } },
+};
+const languageArtifact2 = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/ecosystem/2.0/language",
+  title: "SibylHub normalized ecosystem language artifact",
+  type: "object",
+  required: [
+    "schemaVersion",
+    "revisionId",
+    "language",
+    ...Object.keys(artifactCollections),
+  ],
+  properties: {
+    schemaVersion: { const: "2.0" },
+    revisionId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+    language: {
+      ...stable2,
+      properties: {
+        ...stable2.properties,
+        extensions: { type: "array", items: { type: "string" } },
+      },
+      required: [...stable2.required, "extensions"],
+    },
+    ...artifactCollections,
+  },
+  additionalProperties: false,
+};
+await mkdir(resolve(root, "fixtures/valid-registry/data/v1/languages"), {
+  recursive: true,
+});
+await writeFile(
+  resolve(root, "json-schema/ecosystem-2.0.json"),
+  `${JSON.stringify(registryIndex2, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "json-schema/ecosystem-language-2.0.json"),
+  `${JSON.stringify(languageArtifact2, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/valid-registry/data/v1/index.json"),
+  `${JSON.stringify(validRegistry.index, null, 2)}\n`,
+);
+await Promise.all(
+  Object.entries(validRegistry.languages).map(([slug, artifact]) =>
+    writeFile(
+      resolve(root, `fixtures/valid-registry/data/v1/languages/${slug}.json`),
+      `${JSON.stringify(artifact, null, 2)}\n`,
+    ),
+  ),
+);
+await writeFile(
+  resolve(root, "fixtures/invalid-registry-identity.json"),
+  `${JSON.stringify({ ...validRegistry.index, revisionId: `sha256:${"1".repeat(64)}` }, null, 2)}\n`,
+);
+
 const compile = spawnSync(
   "pnpm",
   ["exec", "tsc", "--project", resolve(root, "tsconfig.json")],

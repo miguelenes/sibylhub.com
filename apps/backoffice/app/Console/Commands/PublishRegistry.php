@@ -2,24 +2,27 @@
 
 namespace App\Console\Commands;
 
+use App\Services\NormalizedRegistryPublisher;
 use Illuminate\Console\Command;
+use Throwable;
 
 class PublishRegistry extends Command
 {
     protected $signature = 'registry:publish {path : Local reviewed export path}';
 
-    protected $description = 'Guarded placeholder for an explicitly authorized remote registry publication';
+    protected $description = 'Publish a reviewed normalized export to the explicitly authorized R2-compatible disk';
 
-    public function handle(): int
+    public function handle(NormalizedRegistryPublisher $publisher): int
     {
-        if (! config('services.sibyl.publication_target') || ! env('SIBYL_PUBLICATION_AUTHORIZED')) {
-            $this->components->error('Publication target and explicit authorization are required. No network call was made.');
+        try {
+            $result = $publisher->publish($this->argument('path'));
+            $this->line(json_encode(['status' => 'published', ...$result], JSON_THROW_ON_ERROR));
+
+            return self::SUCCESS;
+        } catch (Throwable $exception) {
+            $this->components->error($exception->getMessage());
 
             return self::FAILURE;
         }
-
-        $this->components->error('Remote publication is intentionally outside the local bootstrap change.');
-
-        return self::FAILURE;
     }
 }

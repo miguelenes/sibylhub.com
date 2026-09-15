@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "haskell",
+    "slug": "haskell",
+    "name": "Haskell",
+    "purl": {
+      "type": "hackage",
+      "name": "haskell",
+      "version": "managed"
+    },
+    "extensions": [".haskell"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-haskell",
+      "slug": "runtime-haskell",
+      "name": "Haskell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-haskell",
+        "version": "managed"
+      },
+      "languageId": "haskell",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-haskell",
+      "slug": "package-manager-haskell",
+      "name": "Haskell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-haskell",
+        "version": "managed"
+      },
+      "languageId": "haskell",
+      "binary": "haskell",
+      "manifestFile": "manifest.json",
+      "installCommand": "haskell install",
+      "addCommand": "haskell add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-haskell",
+      "slug": "category-haskell",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-haskell",
+      "slug": "package-haskell",
+      "name": "Haskell package",
+      "purl": {
+        "type": "generic",
+        "name": "package-haskell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-haskell",
+      "categoryId": "category-haskell",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-haskell",
+      "slug": "package-alt-haskell",
+      "name": "Haskell alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-haskell",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-haskell",
+      "categoryId": "category-haskell",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-haskell",
+      "slug": "builder-haskell",
+      "name": "Haskell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-haskell",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "haskell build",
+      "languageIds": ["haskell"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-haskell",
+      "slug": "invariant-haskell",
+      "name": "Haskell baseline",
+      "categoryId": "category-haskell",
+      "approvedPackageId": "package-haskell",
+      "bannedPackageId": "package-alt-haskell",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-haskell",
+      "documentableType": "programming_language",
+      "documentableId": "haskell",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

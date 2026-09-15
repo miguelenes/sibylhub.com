@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "php",
+    "slug": "php",
+    "name": "PHP",
+    "purl": {
+      "type": "composer",
+      "name": "php",
+      "version": "managed"
+    },
+    "extensions": [".php"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-php",
+      "slug": "runtime-php",
+      "name": "PHP runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-php",
+        "version": "managed"
+      },
+      "languageId": "php",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-php",
+      "slug": "package-manager-php",
+      "name": "PHP package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-php",
+        "version": "managed"
+      },
+      "languageId": "php",
+      "binary": "php",
+      "manifestFile": "manifest.json",
+      "installCommand": "php install",
+      "addCommand": "php add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-php",
+      "slug": "category-php",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-php",
+      "slug": "package-php",
+      "name": "PHP package",
+      "purl": {
+        "type": "generic",
+        "name": "package-php",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-php",
+      "categoryId": "category-php",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-php",
+      "slug": "package-alt-php",
+      "name": "PHP alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-php",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-php",
+      "categoryId": "category-php",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-php",
+      "slug": "builder-php",
+      "name": "PHP builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-php",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "php build",
+      "languageIds": ["php"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-php",
+      "slug": "invariant-php",
+      "name": "PHP baseline",
+      "categoryId": "category-php",
+      "approvedPackageId": "package-php",
+      "bannedPackageId": "package-alt-php",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-php",
+      "documentableType": "programming_language",
+      "documentableId": "php",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

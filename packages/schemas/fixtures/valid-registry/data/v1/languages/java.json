@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "java",
+    "slug": "java",
+    "name": "Java",
+    "purl": {
+      "type": "maven",
+      "name": "java",
+      "version": "managed"
+    },
+    "extensions": [".java"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-java",
+      "slug": "runtime-java",
+      "name": "Java runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-java",
+        "version": "managed"
+      },
+      "languageId": "java",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-java",
+      "slug": "package-manager-java",
+      "name": "Java package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-java",
+        "version": "managed"
+      },
+      "languageId": "java",
+      "binary": "java",
+      "manifestFile": "manifest.json",
+      "installCommand": "java install",
+      "addCommand": "java add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-java",
+      "slug": "category-java",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-java",
+      "slug": "package-java",
+      "name": "Java package",
+      "purl": {
+        "type": "generic",
+        "name": "package-java",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-java",
+      "categoryId": "category-java",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-java",
+      "slug": "package-alt-java",
+      "name": "Java alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-java",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-java",
+      "categoryId": "category-java",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-java",
+      "slug": "builder-java",
+      "name": "Java builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-java",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "java build",
+      "languageIds": ["java"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-java",
+      "slug": "invariant-java",
+      "name": "Java baseline",
+      "categoryId": "category-java",
+      "approvedPackageId": "package-java",
+      "bannedPackageId": "package-alt-java",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-java",
+      "documentableType": "programming_language",
+      "documentableId": "java",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

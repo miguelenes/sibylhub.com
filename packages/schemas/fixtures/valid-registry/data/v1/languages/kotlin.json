@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "kotlin",
+    "slug": "kotlin",
+    "name": "Kotlin",
+    "purl": {
+      "type": "maven",
+      "name": "kotlin",
+      "version": "managed"
+    },
+    "extensions": [".kotlin"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-kotlin",
+      "slug": "runtime-kotlin",
+      "name": "Kotlin runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-kotlin",
+        "version": "managed"
+      },
+      "languageId": "kotlin",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-kotlin",
+      "slug": "package-manager-kotlin",
+      "name": "Kotlin package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-kotlin",
+        "version": "managed"
+      },
+      "languageId": "kotlin",
+      "binary": "kotlin",
+      "manifestFile": "manifest.json",
+      "installCommand": "kotlin install",
+      "addCommand": "kotlin add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-kotlin",
+      "slug": "category-kotlin",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-kotlin",
+      "slug": "package-kotlin",
+      "name": "Kotlin package",
+      "purl": {
+        "type": "generic",
+        "name": "package-kotlin",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-kotlin",
+      "categoryId": "category-kotlin",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-kotlin",
+      "slug": "package-alt-kotlin",
+      "name": "Kotlin alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-kotlin",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-kotlin",
+      "categoryId": "category-kotlin",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-kotlin",
+      "slug": "builder-kotlin",
+      "name": "Kotlin builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-kotlin",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "kotlin build",
+      "languageIds": ["kotlin"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-kotlin",
+      "slug": "invariant-kotlin",
+      "name": "Kotlin baseline",
+      "categoryId": "category-kotlin",
+      "approvedPackageId": "package-kotlin",
+      "bannedPackageId": "package-alt-kotlin",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-kotlin",
+      "documentableType": "programming_language",
+      "documentableId": "kotlin",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

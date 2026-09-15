@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "c",
+    "slug": "c",
+    "name": "C",
+    "purl": {
+      "type": "generic",
+      "name": "c",
+      "version": "managed"
+    },
+    "extensions": [".c"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-c",
+      "slug": "runtime-c",
+      "name": "C runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-c",
+        "version": "managed"
+      },
+      "languageId": "c",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-c",
+      "slug": "package-manager-c",
+      "name": "C package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-c",
+        "version": "managed"
+      },
+      "languageId": "c",
+      "binary": "c",
+      "manifestFile": "manifest.json",
+      "installCommand": "c install",
+      "addCommand": "c add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-c",
+      "slug": "category-c",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-c",
+      "slug": "package-c",
+      "name": "C package",
+      "purl": {
+        "type": "generic",
+        "name": "package-c",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-c",
+      "categoryId": "category-c",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-c",
+      "slug": "package-alt-c",
+      "name": "C alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-c",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-c",
+      "categoryId": "category-c",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-c",
+      "slug": "builder-c",
+      "name": "C builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-c",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "c build",
+      "languageIds": ["c"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-c",
+      "slug": "invariant-c",
+      "name": "C baseline",
+      "categoryId": "category-c",
+      "approvedPackageId": "package-c",
+      "bannedPackageId": "package-alt-c",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-c",
+      "documentableType": "programming_language",
+      "documentableId": "c",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}

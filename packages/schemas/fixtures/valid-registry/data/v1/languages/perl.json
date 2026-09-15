@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "revisionId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "language": {
+    "id": "perl",
+    "slug": "perl",
+    "name": "Perl",
+    "purl": {
+      "type": "cpan",
+      "name": "perl",
+      "version": "managed"
+    },
+    "extensions": [".perl"]
+  },
+  "runtimes": [
+    {
+      "id": "runtime-perl",
+      "slug": "runtime-perl",
+      "name": "Perl runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-perl",
+        "version": "managed"
+      },
+      "languageId": "perl",
+      "engineType": "interpreter"
+    }
+  ],
+  "packageRegistries": [],
+  "packageManagers": [
+    {
+      "id": "package-manager-perl",
+      "slug": "package-manager-perl",
+      "name": "Perl package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-perl",
+        "version": "managed"
+      },
+      "languageId": "perl",
+      "binary": "perl",
+      "manifestFile": "manifest.json",
+      "installCommand": "perl install",
+      "addCommand": "perl add"
+    }
+  ],
+  "lockfileSpecifications": [],
+  "workspaceConfigurations": [],
+  "packageCategories": [
+    {
+      "id": "category-perl",
+      "slug": "category-perl",
+      "name": "Recommended"
+    }
+  ],
+  "packages": [
+    {
+      "id": "package-perl",
+      "slug": "package-perl",
+      "name": "Perl package",
+      "purl": {
+        "type": "generic",
+        "name": "package-perl",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-perl",
+      "categoryId": "category-perl",
+      "opinionated": true
+    },
+    {
+      "id": "package-alt-perl",
+      "slug": "package-alt-perl",
+      "name": "Perl alternate package",
+      "purl": {
+        "type": "generic",
+        "name": "package-alt-perl",
+        "version": "managed"
+      },
+      "packageManagerId": "package-manager-perl",
+      "categoryId": "category-perl",
+      "opinionated": false
+    }
+  ],
+  "compatibilities": [],
+  "builders": [
+    {
+      "id": "builder-perl",
+      "slug": "builder-perl",
+      "name": "Perl builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-perl",
+        "version": "managed"
+      },
+      "configurationFiles": ["manifest.json"],
+      "runCommand": "perl build",
+      "languageIds": ["perl"]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-perl",
+      "slug": "invariant-perl",
+      "name": "Perl baseline",
+      "categoryId": "category-perl",
+      "approvedPackageId": "package-perl",
+      "bannedPackageId": "package-alt-perl",
+      "severity": "warning",
+      "reason": "Use the managed package contract."
+    }
+  ],
+  "documentations": [
+    {
+      "id": "docs-perl",
+      "documentableType": "programming_language",
+      "documentableId": "perl",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tokenCount": 1
+    }
+  ],
+  "documentationChunks": []
+}
