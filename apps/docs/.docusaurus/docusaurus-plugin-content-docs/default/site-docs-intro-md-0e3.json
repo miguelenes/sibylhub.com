@@ -1,0 +1,22 @@
+{
+  "id": "intro",
+  "title": "SibylHub platform",
+  "description": "SibylHub connects a server-rendered Astro site, a Laravel registry editor, a Rust API, a workstation CLI, and this static documentation site through versioned shared schemas.",
+  "source": "@site/docs/intro.md",
+  "sourceDirName": ".",
+  "slug": "/intro",
+  "permalink": "/docs/intro",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1
+  },
+  "sidebar": "platform",
+  "next": {
+    "title": "Workspace boundaries",
+    "permalink": "/docs/workspace"
+  }
+}

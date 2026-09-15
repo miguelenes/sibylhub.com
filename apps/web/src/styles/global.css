@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@theme {
+  --color-sibyl-cyan: oklch(0.82 0.14 190);
+  --color-sibyl-violet: oklch(0.7 0.18 300);
+}
+
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+body {
+  margin: 0;
+}

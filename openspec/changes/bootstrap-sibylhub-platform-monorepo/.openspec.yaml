@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-09-15
+goal: Establish a production-ready, reproducible multi-runtime SibylHub monorepo
+  with unified orchestration, explicit application contracts, shared schemas,
+  and verified local build/test workflows

@@ -1,0 +1,42 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { StatusIsland } from "../components/StatusIsland";
+import "../styles/global.css";
+
+const capabilities = [
+  "Versioned ecosystem contracts",
+  "Server-rendered public routes",
+  "Local-first validation",
+];
+---
+
+<Layout title="SibylHub platform">
+  <main class="mx-auto flex min-h-screen max-w-5xl flex-col gap-12 px-6 py-20">
+    <header class="max-w-3xl space-y-6">
+      <p class="text-sm font-medium uppercase tracking-[0.3em] text-cyan-300">
+        SibylHub
+      </p>
+      <h1 class="text-5xl font-semibold tracking-tight text-white sm:text-7xl">
+        A governed home for ecosystem knowledge.
+      </h1>
+      <p class="max-w-2xl text-lg leading-8 text-slate-300">
+        The baseline route is server-rendered by Astro and leaves interactive
+        behavior to one focused React island.
+      </p>
+    </header>
+    <section
+      aria-labelledby="capabilities-heading"
+      class="grid gap-4 sm:grid-cols-3"
+    >
+      <h2 id="capabilities-heading" class="sr-only">
+        Platform capabilities
+      </h2>
+      {capabilities.map((capability) => (
+        <article class="rounded-2xl border border-violet-300/20 bg-violet-950/20 p-5 text-violet-100">
+          {capability}
+        </article>
+      ))}
+    </section>
+    <StatusIsland client:visible />
+  </main>
+</Layout>

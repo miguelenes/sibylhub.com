@@ -1,0 +1,30 @@
+name = "sibylhub-web-local"
+main = "./dist/_worker.js/index.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+SIBYL_ENV = "local"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "local"
+database_id = "local"
+
+[[r2_buckets]]
+binding = "AST_STORAGE"
+bucket_name = "local"
+
+[[vectorize]]
+binding = "VECTORIZE_INDEX"
+index_name = "local"
+
+[env.preview]
+name = "sibylhub-web-preview"
+
+[env.preview.vars]
+SIBYL_ENV = "preview"
+
+[env.production]
+name = "sibylhub-web-production"
+# Production resource identifiers are supplied outside tracked files.

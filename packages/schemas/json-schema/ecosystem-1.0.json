@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sibylhub.com/schema/ecosystem/1.0",
+  "title": "SibylHub ecosystem document",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "revisionId",
+    "languages",
+    "runtimes",
+    "packageManagers",
+    "lockfiles",
+    "builders",
+    "invariants",
+    "documentation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "revisionId": {
+      "type": "string"
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 25,
+      "maxItems": 25
+    },
+    "runtimes": {
+      "type": "array"
+    },
+    "packageManagers": {
+      "type": "array"
+    },
+    "lockfiles": {
+      "type": "array"
+    },
+    "builders": {
+      "type": "array"
+    },
+    "invariants": {
+      "type": "array"
+    },
+    "documentation": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": false
+}

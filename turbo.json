@@ -1,0 +1,19 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "*.config.*", "*.toml", "*.json"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "deploy": { "cache": false },
+    "registry:publish": { "cache": false },
+    "migrate": { "cache": false },
+    "lint": { "dependsOn": ["^lint"] },
+    "typecheck": { "dependsOn": ["^typecheck"] },
+    "test": { "dependsOn": ["^test"] },
+    "test:cov": { "dependsOn": ["^test:cov"], "cache": false },
+    "format": { "cache": false },
+    "clean": { "cache": false }
+  }
+}

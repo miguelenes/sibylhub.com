@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0",
+  "rules": [
+    {
+      "id": "no-credentials",
+      "kind": "forbidden-content",
+      "patterns": ["private-key", "authorization-token", "database-password"]
+    },
+    {
+      "id": "server-first-web",
+      "kind": "source-policy",
+      "path": "apps/web/src/pages",
+      "requires": "non-interactive-content-without-hydration"
+    },
+    {
+      "id": "native-dependency-ownership",
+      "kind": "package-policy",
+      "owners": { "javascript": "pnpm", "php": "composer", "rust": "cargo" }
+    }
+  ]
+}

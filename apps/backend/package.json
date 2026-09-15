@@ -1,0 +1,14 @@
+{
+  "name": "backend",
+  "private": true,
+  "scripts": {
+    "dev": "cargo run -p sibyl-backend",
+    "build": "cargo build -p sibyl-backend --release --locked",
+    "lint": "cargo clippy -p sibyl-backend --all-targets --locked -- -D warnings",
+    "format": "cargo fmt -p sibyl-backend -- --check",
+    "typecheck": "cargo check -p sibyl-backend --locked",
+    "test": "cargo test -p sibyl-backend --locked",
+    "test:cov": "cargo test -p sibyl-backend --locked",
+    "clean": "cargo clean -p sibyl-backend"
+  }
+}

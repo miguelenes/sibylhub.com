@@ -1,0 +1,14 @@
+{
+  "name": "cli",
+  "private": true,
+  "scripts": {
+    "dev": "cargo run -p sibyl-cli -- --help",
+    "build": "cargo build -p sibyl-cli --release --locked",
+    "lint": "cargo clippy -p sibyl-cli --all-targets --locked -- -D warnings",
+    "typecheck": "cargo check -p sibyl-cli --locked",
+    "format": "cargo fmt -p sibyl-cli -- --check",
+    "test": "cargo test -p sibyl-cli --locked",
+    "test:cov": "cargo test -p sibyl-cli --locked",
+    "clean": "cargo clean -p sibyl-cli"
+  }
+}

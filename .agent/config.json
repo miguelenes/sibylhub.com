@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "project": "sibylhub-platform",
+  "mode": "declarative",
+  "runtimeOwners": {
+    "apps/web": "astro-cloudflare",
+    "apps/backoffice": "laravel-filament",
+    "apps/backend": "rust-axum",
+    "apps/cli": "rust-clap",
+    "apps/docs": "docusaurus"
+  },
+  "safeCommands": [
+    "pnpm check:config",
+    "pnpm lint",
+    "pnpm typecheck",
+    "pnpm test",
+    "pnpm format",
+    "cargo test --workspace --locked"
+  ],
+  "remoteMutationRequiresExplicitCommand": true,
+  "remoteEvidenceIsSeparate": true
+}

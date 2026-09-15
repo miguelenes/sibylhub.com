@@ -1,0 +1,9 @@
+{
+  "extends": "@sibylhub/typescript-config/schema.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "json-schema", "fixtures"]
+}

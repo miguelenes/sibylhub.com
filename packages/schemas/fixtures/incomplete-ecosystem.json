@@ -1,0 +1,1185 @@
+{
+  "schemaVersion": "1.0",
+  "revisionId": "local-bootstrap-1",
+  "languages": [
+    {
+      "id": "c",
+      "name": "C",
+      "purl": {
+        "type": "generic",
+        "name": "c",
+        "version": "managed"
+      },
+      "runtimeId": "runtime-c",
+      "packageManagerId": "package-manager-c",
+      "lockfileId": "lockfile-c",
+      "builderId": "builder-c",
+      "invariantIds": [
+        "invariant-c"
+      ],
+      "documentationId": "docs-c"
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "runtime-c",
+      "name": "C runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-cpp",
+      "name": "C++ runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-cpp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-csharp",
+      "name": "C# runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-csharp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-dart",
+      "name": "Dart runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-dart",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-elixir",
+      "name": "Elixir runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-elixir",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-go",
+      "name": "Go runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-go",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-haskell",
+      "name": "Haskell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-haskell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-java",
+      "name": "Java runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-java",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-javascript",
+      "name": "JavaScript runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-javascript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-kotlin",
+      "name": "Kotlin runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-kotlin",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-lua",
+      "name": "Lua runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-lua",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-objective-c",
+      "name": "Objective-C runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-objective-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-perl",
+      "name": "Perl runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-perl",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-php",
+      "name": "PHP runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-php",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-python",
+      "name": "Python runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-python",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-r",
+      "name": "R runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-r",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-ruby",
+      "name": "Ruby runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-ruby",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-rust",
+      "name": "Rust runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-rust",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-scala",
+      "name": "Scala runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-scala",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-swift",
+      "name": "Swift runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-swift",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-typescript",
+      "name": "TypeScript runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-typescript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-zig",
+      "name": "Zig runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-zig",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-shell",
+      "name": "Shell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-shell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-powershell",
+      "name": "PowerShell runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-powershell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "runtime-sql",
+      "name": "SQL runtime",
+      "purl": {
+        "type": "generic",
+        "name": "runtime-sql",
+        "version": "managed"
+      }
+    }
+  ],
+  "packageManagers": [
+    {
+      "id": "package-manager-c",
+      "name": "C package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-cpp",
+      "name": "C++ package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-cpp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-csharp",
+      "name": "C# package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-csharp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-dart",
+      "name": "Dart package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-dart",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-elixir",
+      "name": "Elixir package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-elixir",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-go",
+      "name": "Go package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-go",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-haskell",
+      "name": "Haskell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-haskell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-java",
+      "name": "Java package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-java",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-javascript",
+      "name": "JavaScript package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-javascript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-kotlin",
+      "name": "Kotlin package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-kotlin",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-lua",
+      "name": "Lua package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-lua",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-objective-c",
+      "name": "Objective-C package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-objective-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-perl",
+      "name": "Perl package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-perl",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-php",
+      "name": "PHP package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-php",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-python",
+      "name": "Python package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-python",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-r",
+      "name": "R package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-r",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-ruby",
+      "name": "Ruby package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-ruby",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-rust",
+      "name": "Rust package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-rust",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-scala",
+      "name": "Scala package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-scala",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-swift",
+      "name": "Swift package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-swift",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-typescript",
+      "name": "TypeScript package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-typescript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-zig",
+      "name": "Zig package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-zig",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-shell",
+      "name": "Shell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-shell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-powershell",
+      "name": "PowerShell package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-powershell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "package-manager-sql",
+      "name": "SQL package manager",
+      "purl": {
+        "type": "generic",
+        "name": "package-manager-sql",
+        "version": "managed"
+      }
+    }
+  ],
+  "lockfiles": [
+    {
+      "id": "lockfile-c",
+      "name": "C lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-cpp",
+      "name": "C++ lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-cpp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-csharp",
+      "name": "C# lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-csharp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-dart",
+      "name": "Dart lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-dart",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-elixir",
+      "name": "Elixir lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-elixir",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-go",
+      "name": "Go lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-go",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-haskell",
+      "name": "Haskell lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-haskell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-java",
+      "name": "Java lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-java",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-javascript",
+      "name": "JavaScript lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-javascript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-kotlin",
+      "name": "Kotlin lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-kotlin",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-lua",
+      "name": "Lua lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-lua",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-objective-c",
+      "name": "Objective-C lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-objective-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-perl",
+      "name": "Perl lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-perl",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-php",
+      "name": "PHP lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-php",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-python",
+      "name": "Python lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-python",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-r",
+      "name": "R lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-r",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-ruby",
+      "name": "Ruby lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-ruby",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-rust",
+      "name": "Rust lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-rust",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-scala",
+      "name": "Scala lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-scala",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-swift",
+      "name": "Swift lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-swift",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-typescript",
+      "name": "TypeScript lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-typescript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-zig",
+      "name": "Zig lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-zig",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-shell",
+      "name": "Shell lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-shell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-powershell",
+      "name": "PowerShell lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-powershell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "lockfile-sql",
+      "name": "SQL lockfile",
+      "purl": {
+        "type": "generic",
+        "name": "lockfile-sql",
+        "version": "managed"
+      }
+    }
+  ],
+  "builders": [
+    {
+      "id": "builder-c",
+      "name": "C builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-cpp",
+      "name": "C++ builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-cpp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-csharp",
+      "name": "C# builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-csharp",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-dart",
+      "name": "Dart builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-dart",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-elixir",
+      "name": "Elixir builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-elixir",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-go",
+      "name": "Go builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-go",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-haskell",
+      "name": "Haskell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-haskell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-java",
+      "name": "Java builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-java",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-javascript",
+      "name": "JavaScript builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-javascript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-kotlin",
+      "name": "Kotlin builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-kotlin",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-lua",
+      "name": "Lua builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-lua",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-objective-c",
+      "name": "Objective-C builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-objective-c",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-perl",
+      "name": "Perl builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-perl",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-php",
+      "name": "PHP builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-php",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-python",
+      "name": "Python builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-python",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-r",
+      "name": "R builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-r",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-ruby",
+      "name": "Ruby builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-ruby",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-rust",
+      "name": "Rust builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-rust",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-scala",
+      "name": "Scala builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-scala",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-swift",
+      "name": "Swift builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-swift",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-typescript",
+      "name": "TypeScript builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-typescript",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-zig",
+      "name": "Zig builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-zig",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-shell",
+      "name": "Shell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-shell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-powershell",
+      "name": "PowerShell builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-powershell",
+        "version": "managed"
+      }
+    },
+    {
+      "id": "builder-sql",
+      "name": "SQL builder",
+      "purl": {
+        "type": "generic",
+        "name": "builder-sql",
+        "version": "managed"
+      }
+    }
+  ],
+  "invariants": [
+    {
+      "id": "invariant-c",
+      "name": "C baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-cpp",
+      "name": "C++ baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-csharp",
+      "name": "C# baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-dart",
+      "name": "Dart baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-elixir",
+      "name": "Elixir baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-go",
+      "name": "Go baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-haskell",
+      "name": "Haskell baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-java",
+      "name": "Java baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-javascript",
+      "name": "JavaScript baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-kotlin",
+      "name": "Kotlin baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-lua",
+      "name": "Lua baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-objective-c",
+      "name": "Objective-C baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-perl",
+      "name": "Perl baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-php",
+      "name": "PHP baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-python",
+      "name": "Python baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-r",
+      "name": "R baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-ruby",
+      "name": "Ruby baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-rust",
+      "name": "Rust baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-scala",
+      "name": "Scala baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-swift",
+      "name": "Swift baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-typescript",
+      "name": "TypeScript baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-zig",
+      "name": "Zig baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-shell",
+      "name": "Shell baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-powershell",
+      "name": "PowerShell baseline",
+      "rule": "declared-runtime-and-lockfile"
+    },
+    {
+      "id": "invariant-sql",
+      "name": "SQL baseline",
+      "rule": "declared-runtime-and-lockfile"
+    }
+  ],
+  "documentation": [
+    {
+      "id": "docs-c",
+      "path": "docs/languages/c.md",
+      "title": "C ecosystem"
+    },
+    {
+      "id": "docs-cpp",
+      "path": "docs/languages/cpp.md",
+      "title": "C++ ecosystem"
+    },
+    {
+      "id": "docs-csharp",
+      "path": "docs/languages/csharp.md",
+      "title": "C# ecosystem"
+    },
+    {
+      "id": "docs-dart",
+      "path": "docs/languages/dart.md",
+      "title": "Dart ecosystem"
+    },
+    {
+      "id": "docs-elixir",
+      "path": "docs/languages/elixir.md",
+      "title": "Elixir ecosystem"
+    },
+    {
+      "id": "docs-go",
+      "path": "docs/languages/go.md",
+      "title": "Go ecosystem"
+    },
+    {
+      "id": "docs-haskell",
+      "path": "docs/languages/haskell.md",
+      "title": "Haskell ecosystem"
+    },
+    {
+      "id": "docs-java",
+      "path": "docs/languages/java.md",
+      "title": "Java ecosystem"
+    },
+    {
+      "id": "docs-javascript",
+      "path": "docs/languages/javascript.md",
+      "title": "JavaScript ecosystem"
+    },
+    {
+      "id": "docs-kotlin",
+      "path": "docs/languages/kotlin.md",
+      "title": "Kotlin ecosystem"
+    },
+    {
+      "id": "docs-lua",
+      "path": "docs/languages/lua.md",
+      "title": "Lua ecosystem"
+    },
+    {
+      "id": "docs-objective-c",
+      "path": "docs/languages/objective-c.md",
+      "title": "Objective-C ecosystem"
+    },
+    {
+      "id": "docs-perl",
+      "path": "docs/languages/perl.md",
+      "title": "Perl ecosystem"
+    },
+    {
+      "id": "docs-php",
+      "path": "docs/languages/php.md",
+      "title": "PHP ecosystem"
+    },
+    {
+      "id": "docs-python",
+      "path": "docs/languages/python.md",
+      "title": "Python ecosystem"
+    },
+    {
+      "id": "docs-r",
+      "path": "docs/languages/r.md",
+      "title": "R ecosystem"
+    },
+    {
+      "id": "docs-ruby",
+      "path": "docs/languages/ruby.md",
+      "title": "Ruby ecosystem"
+    },
+    {
+      "id": "docs-rust",
+      "path": "docs/languages/rust.md",
+      "title": "Rust ecosystem"
+    },
+    {
+      "id": "docs-scala",
+      "path": "docs/languages/scala.md",
+      "title": "Scala ecosystem"
+    },
+    {
+      "id": "docs-swift",
+      "path": "docs/languages/swift.md",
+      "title": "Swift ecosystem"
+    },
+    {
+      "id": "docs-typescript",
+      "path": "docs/languages/typescript.md",
+      "title": "TypeScript ecosystem"
+    },
+    {
+      "id": "docs-zig",
+      "path": "docs/languages/zig.md",
+      "title": "Zig ecosystem"
+    },
+    {
+      "id": "docs-shell",
+      "path": "docs/languages/shell.md",
+      "title": "Shell ecosystem"
+    },
+    {
+      "id": "docs-powershell",
+      "path": "docs/languages/powershell.md",
+      "title": "PowerShell ecosystem"
+    },
+    {
+      "id": "docs-sql",
+      "path": "docs/languages/sql.md",
+      "title": "SQL ecosystem"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "skills": [
+    {
+      "id": "workspace-validation",
+      "scope": "repository",
+      "declarative": true
+    },
+    {
+      "id": "schema-consumer",
+      "scope": "packages/schemas",
+      "declarative": true
+    },
+    { "id": "web-worker", "scope": "apps/web", "declarative": true },
+    {
+      "id": "registry-source",
+      "scope": "apps/backoffice",
+      "declarative": true
+    },
+    {
+      "id": "rust-services",
+      "scope": "apps/backend,apps/cli",
+      "declarative": true
+    }
+  ]
+}

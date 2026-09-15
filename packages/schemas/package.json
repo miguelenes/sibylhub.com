@@ -1,0 +1,33 @@
+{
+  "name": "@sibylhub/schemas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "json-schema",
+    "fixtures"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "lint": "eslint src scripts --max-warnings=0",
+    "format": "prettier --check src scripts",
+    "format:write": "prettier --write src scripts",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "clean": "rm -rf dist generated"
+  },
+  "dependencies": {
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@sibylhub/typescript-config": "workspace:*",
+    "@typescript-eslint/parser": "8.46.1",
+    "@types/node": "24.8.1",
+    "@vitest/coverage-v8": "3.2.4",
+    "eslint": "9.37.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "schemas",
+  "title": "Shared schemas",
+  "description": "The optional Context7 retrieval boundary reads these versioned artifacts as documentation context; it does not become a runtime dependency of the applications and never fetches private or remote state during local builds. This keeps documentation retrieval reproducible and lets each consumer validate the same schema-version envelope.",
+  "source": "@site/docs/schemas.md",
+  "sourceDirName": ".",
+  "slug": "/schemas",
+  "permalink": "/docs/schemas",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "sidebar_position": 3
+  },
+  "sidebar": "platform",
+  "previous": {
+    "title": "Workspace boundaries",
+    "permalink": "/docs/workspace"
+  },
+  "next": {
+    "title": "Agent governance",
+    "permalink": "/docs/governance"
+  }
+}

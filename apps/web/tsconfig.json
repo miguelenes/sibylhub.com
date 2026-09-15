@@ -1,0 +1,11 @@
+{
+  "extends": "@sibylhub/typescript-config/astro.json",
+  "include": [
+    ".astro/types.d.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "astro.config.ts",
+    "env.d.ts"
+  ],
+  "exclude": ["dist"]
+}

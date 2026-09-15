@@ -1,0 +1,9 @@
+{
+  "extends": "@sibylhub/typescript-config/docusaurus.json",
+  "compilerOptions": {
+    "types": ["@docusaurus/module-type-aliases", "@docusaurus/types"],
+    "baseUrl": ".",
+    "paths": { "@site/*": ["./*"] }
+  },
+  "include": ["src", "docusaurus.config.ts", "sidebars.ts"]
+}
