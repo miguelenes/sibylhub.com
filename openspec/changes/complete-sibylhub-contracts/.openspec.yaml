@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-09-15
+goal: Make schema artifacts self-contained, align CLI metadata and checks with
+  shared contracts, evaluate backend invariants from evidence, and make
+  backoffice exports authoritative and deterministic.

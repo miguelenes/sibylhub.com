@@ -39,19 +39,20 @@ The environment examples contain shape only. Copy them to local environment file
 
 ## Commands
 
-| Command             | Owner           | Local result                                                                   |
-| ------------------- | --------------- | ------------------------------------------------------------------------------ |
-| `pnpm dev`          | Turborepo       | Starts package development processes in parallel                               |
-| `pnpm dev:web`      | `apps/web`      | Starts Astro development on port 4321                                          |
-| `pnpm dev:backend`  | `apps/backend`  | Starts the Rust API on `127.0.0.1:8787`                                        |
-| `pnpm build`        | Turborepo       | Builds schemas, web, backoffice assets, Rust release binaries, and docs        |
-| `pnpm test`         | Turborepo       | Runs local package test suites                                                 |
-| `pnpm test:cov`     | Turborepo       | Runs package coverage tasks and reports unavailable drivers separately         |
-| `pnpm lint`         | Turborepo       | Runs package lint and configuration checks                                     |
-| `pnpm typecheck`    | Turborepo       | Runs TypeScript, Astro, and Rust compile/type checks                           |
-| `pnpm format`       | root dispatcher | Checks Prettier-owned files, PHP with Pint when installed, and Rust with Cargo |
-| `pnpm format:write` | root dispatcher | Formats files with their owning formatter                                      |
-| `pnpm clean`        | Turborepo       | Removes generated package output and local Rust/Turbo output                   |
+| Command                 | Owner           | Local result                                                                                 |
+| ----------------------- | --------------- | -------------------------------------------------------------------------------------------- |
+| `pnpm dev`              | Turborepo       | Starts package development processes in parallel                                             |
+| `pnpm dev:web`          | `apps/web`      | Starts Astro development on port 4321                                                        |
+| `pnpm dev:backend`      | `apps/backend`  | Starts the Rust API on `127.0.0.1:8787`                                                      |
+| `pnpm build`            | Turborepo       | Builds schemas, web, backoffice assets, Rust release binaries, and docs                      |
+| `pnpm test`             | Turborepo       | Runs local package test suites                                                               |
+| `pnpm test:cov`         | Turborepo       | Runs package coverage tasks and reports unavailable drivers separately                       |
+| `pnpm lint`             | Turborepo       | Runs package lint and configuration checks                                                   |
+| `pnpm typecheck`        | Turborepo       | Runs TypeScript, Astro, and Rust compile/type checks                                         |
+| `pnpm format`           | root dispatcher | Checks Prettier-owned files, PHP with Pint when installed, and Rust with Cargo               |
+| `pnpm format:write`     | root dispatcher | Formats files with their owning formatter                                                    |
+| `pnpm clean`            | Turborepo       | Removes generated package output and local Rust/Turbo output                                 |
+| `pnpm verify:contracts` | root dispatcher | Verifies generated schemas, deterministic fixtures, and cross-runtime contract shape offline |
 
 Package manifests document native commands. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer, and Rust uses Cargo. `wrangler deploy`, registry publication, database migrations, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
 

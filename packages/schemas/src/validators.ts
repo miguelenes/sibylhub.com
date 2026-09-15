@@ -1,25 +1,44 @@
 import { z } from "zod";
+import { languageIdentities } from "./catalog.js";
 import type {
+  AgentConfig,
   EcosystemDocument,
+  InvariantDocument,
   Purl,
+  SkillsDocument,
   ValidationIssue,
   ValidationResult,
 } from "./types.js";
 
 const purlSchema = z
   .object({
-    type: z.string().min(1),
-    namespace: z.string().min(1).optional(),
-    name: z.string().min(1),
-    version: z.string().min(1),
+    type: z.string().regex(/^[a-z0-9][a-z0-9.+-]*$/),
+    namespace: z
+      .string()
+      .min(1)
+      .regex(/^[^\s]+$/)
+      .optional(),
+    name: z
+      .string()
+      .min(1)
+      .regex(/^[^\s]+$/),
+    version: z
+      .string()
+      .min(1)
+      .regex(/^[^\s]+$/),
     qualifiers: z.record(z.string(), z.string()).optional(),
-    subpath: z.string().min(1).optional(),
+    subpath: z
+      .string()
+      .min(1)
+      .regex(/^[^\s]+$/)
+      .optional(),
   })
   .strict();
 
 const catalogEntrySchema = z
   .object({ id: z.string().min(1), name: z.string().min(1), purl: purlSchema })
   .strict();
+
 const ecosystemSchema = z
   .object({
     schemaVersion: z.literal("1.0"),
@@ -36,21 +55,23 @@ const ecosystemSchema = z
         }),
       )
       .length(25),
-    runtimes: z.array(catalogEntrySchema).min(25),
-    packageManagers: z.array(catalogEntrySchema).min(25),
-    lockfiles: z.array(catalogEntrySchema).min(25),
-    builders: z.array(catalogEntrySchema).min(25),
+    runtimes: z.array(catalogEntrySchema).length(25),
+    packageManagers: z.array(catalogEntrySchema).length(25),
+    lockfiles: z.array(catalogEntrySchema).length(25),
+    builders: z.array(catalogEntrySchema).length(25),
     invariants: z
       .array(
         z
           .object({
             id: z.string().min(1),
             name: z.string().min(1),
+            languageId: z.string().min(1),
             rule: z.string().min(1),
+            evidenceFields: z.array(z.string().min(1)).min(1),
           })
           .strict(),
       )
-      .min(25),
+      .length(25),
     documentation: z
       .array(
         z
@@ -61,7 +82,18 @@ const ecosystemSchema = z
           })
           .strict(),
       )
-      .min(25),
+      .length(25),
+  })
+  .strict();
+
+const manifestEvidenceSchema = z
+  .object({
+    path: z.string().min(1),
+    kind: z.string().min(1),
+    languageId: z.string().min(1),
+    runtimeId: z.string().min(1),
+    packageManagerId: z.string().min(1).optional(),
+    lockfileId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -72,6 +104,8 @@ const agentConfigSchema = z
     mode: z.literal("declarative"),
     runtimeOwners: z.record(z.string(), z.string().min(1)),
     safeCommands: z.array(z.string().min(1)),
+    manifestEvidence: z.array(manifestEvidenceSchema),
+    invariantIds: z.array(z.string().min(1)),
     remoteMutationRequiresExplicitCommand: z.literal(true),
     remoteEvidenceIsSeparate: z.literal(true),
   })
@@ -91,13 +125,19 @@ const skillsSchema = z
     ),
   })
   .strict();
+
 const invariantSchema = z
   .object({
     schemaVersion: z.literal("1.0"),
     rules: z.array(
       z
-        .object({ id: z.string().min(1), kind: z.string().min(1) })
-        .passthrough(),
+        .object({
+          id: z.string().min(1),
+          kind: z.string().min(1),
+          languageId: z.string().min(1),
+          evidenceFields: z.array(z.string().min(1)).min(1),
+        })
+        .strict(),
     ),
   })
   .strict();
@@ -141,15 +181,14 @@ function validate<T>(
   input: unknown,
 ): ValidationResult<T> {
   const unsafe = rejectUnsafe(input);
-  if (unsafe.length) return { valid: false, issues: unsafe };
+  const schemaVersion =
+    typeof input === "object" && input && "schemaVersion" in input
+      ? String((input as { schemaVersion: unknown }).schemaVersion)
+      : undefined;
+  if (unsafe.length) return { valid: false, schemaVersion, issues: unsafe };
   const result = schema.safeParse(input);
   if (!result.success)
-    return issues(
-      result.error,
-      typeof input === "object" && input && "schemaVersion" in input
-        ? String((input as { schemaVersion: unknown }).schemaVersion)
-        : undefined,
-    ) as ValidationResult<T>;
+    return issues(result.error, schemaVersion) as ValidationResult<T>;
   return { valid: true, data: result.data, schemaVersion: "1.0", issues: [] };
 }
 
@@ -166,6 +205,46 @@ function referencesExist(document: EcosystemDocument): ValidationIssue[] {
     ["invariantId", new Set(document.invariants.map((item) => item.id))],
   ]);
   const result: ValidationIssue[] = [];
+  const expectedLanguages = new Set(languageIdentities);
+  const actualLanguages = new Set(
+    document.languages.map((language) => language.id),
+  );
+  for (const languageId of languageIdentities) {
+    if (!actualLanguages.has(languageId))
+      result.push({
+        path: "languages",
+        code: "missing_language",
+        message: `Missing language identity ${languageId}`,
+      });
+  }
+  for (const languageId of actualLanguages) {
+    if (
+      !expectedLanguages.has(languageId as (typeof languageIdentities)[number])
+    )
+      result.push({
+        path: "languages",
+        code: "unsupported_language",
+        message: `Unsupported language identity ${languageId}`,
+      });
+  }
+  const collections = [
+    ["languages", document.languages],
+    ["runtimes", document.runtimes],
+    ["packageManagers", document.packageManagers],
+    ["lockfiles", document.lockfiles],
+    ["builders", document.builders],
+    ["invariants", document.invariants],
+    ["documentation", document.documentation],
+  ] as const;
+  for (const [collection, values] of collections) {
+    const ids = values.map((value) => value.id);
+    if (new Set(ids).size !== ids.length)
+      result.push({
+        path: collection,
+        code: "duplicate_identifier",
+        message: `The ${collection} collection contains duplicate identifiers`,
+      });
+  }
   document.languages.forEach((language, index) => {
     for (const field of [
       "runtimeId",
@@ -189,6 +268,28 @@ function referencesExist(document: EcosystemDocument): ValidationIssue[] {
           message: `Unknown invariant ${id}`,
         });
     });
+    if (
+      !document.invariants.some(
+        (invariant) => invariant.languageId === language.id,
+      )
+    )
+      result.push({
+        path: `languages.${index}.invariantIds`,
+        code: "missing_invariant_relationship",
+        message: `No invariant rule is associated with ${language.id}`,
+      });
+  });
+  document.invariants.forEach((invariant, index) => {
+    if (
+      !expectedLanguages.has(
+        invariant.languageId as (typeof languageIdentities)[number],
+      )
+    )
+      result.push({
+        path: `invariants.${index}.languageId`,
+        code: "unresolved_reference",
+        message: `Unknown language ${invariant.languageId}`,
+      });
   });
   return result;
 }
@@ -207,12 +308,39 @@ export function validateEcosystem(
 export function validatePurl(input: unknown): ValidationResult<Purl> {
   return validate(purlSchema, input);
 }
-export function validateAgentConfig(input: unknown) {
+
+export function validateAgentConfig(
+  input: unknown,
+): ValidationResult<AgentConfig> {
   return validate(agentConfigSchema, input);
 }
-export function validateSkills(input: unknown) {
+
+export function validateSkills(
+  input: unknown,
+): ValidationResult<SkillsDocument> {
   return validate(skillsSchema, input);
 }
-export function validateInvariants(input: unknown) {
+
+export function validateInvariants(
+  input: unknown,
+): ValidationResult<InvariantDocument> {
   return validate(invariantSchema, input);
+}
+
+export function normalizePurl(input: Purl): Purl {
+  return {
+    ...input,
+    type: input.type.toLowerCase(),
+    namespace: input.namespace?.trim() || undefined,
+    name: input.name.trim(),
+    version: input.version.trim(),
+    qualifiers: input.qualifiers
+      ? Object.fromEntries(
+          Object.entries(input.qualifiers).sort(([left], [right]) =>
+            left.localeCompare(right),
+          ),
+        )
+      : undefined,
+    subpath: input.subpath?.trim() || undefined,
+  };
 }

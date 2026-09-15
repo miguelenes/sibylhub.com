@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sibylhub.com/schema/agent-config/1.0",
+  "title": "SibylHub agent configuration",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "project",
+    "mode",
+    "runtimeOwners",
+    "safeCommands",
+    "manifestEvidence",
+    "invariantIds",
+    "remoteMutationRequiresExplicitCommand",
+    "remoteEvidenceIsSeparate"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "const": "declarative"
+    },
+    "runtimeOwners": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "safeCommands": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "manifestEvidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "kind",
+          "languageId",
+          "runtimeId"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "languageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtimeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "packageManagerId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "lockfileId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "invariantIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "remoteMutationRequiresExplicitCommand": {
+      "const": true
+    },
+    "remoteEvidenceIsSeparate": {
+      "const": true
+    }
+  },
+  "additionalProperties": false
+}

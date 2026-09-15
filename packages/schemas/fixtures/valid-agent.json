@@ -22,6 +22,5 @@
     "invariant-typescript"
   ],
   "remoteMutationRequiresExplicitCommand": true,
-  "remoteEvidenceIsSeparate": true,
-  "password": "must-not-parse"
+  "remoteEvidenceIsSeparate": true
 }

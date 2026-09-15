@@ -1,6 +1,6 @@
-import type { EcosystemDocument } from "./types.js";
+import type { EcosystemDocument, InvariantRule } from "./types.js";
 
-const languageNames = [
+export const languageNames = [
   ["c", "C"],
   ["cpp", "C++"],
   ["csharp", "C#"],
@@ -28,7 +28,7 @@ const languageNames = [
   ["sql", "SQL"],
 ] as const;
 
-const purlType: Record<string, string> = {
+export const purlTypes: Record<string, string> = {
   c: "generic",
   cpp: "generic",
   csharp: "nuget",
@@ -66,7 +66,7 @@ export const validEcosystem: EcosystemDocument = {
   schemaVersion: "1.0",
   revisionId: "local-bootstrap-1",
   languages: languageNames.map(([id, name]) => ({
-    ...entry(id, name, purlType[id]),
+    ...entry(id, name, purlTypes[id]),
     runtimeId: `runtime-${id}`,
     packageManagerId: `package-manager-${id}`,
     lockfileId: `lockfile-${id}`,
@@ -86,10 +86,12 @@ export const validEcosystem: EcosystemDocument = {
   builders: languageNames.map(([id, name]) =>
     entry(`builder-${id}`, `${name} builder`, "generic"),
   ),
-  invariants: languageNames.map(([id, name]) => ({
+  invariants: languageNames.map(([id, name]): InvariantRule => ({
     id: `invariant-${id}`,
     name: `${name} baseline`,
+    languageId: id,
     rule: "declared-runtime-and-lockfile",
+    evidenceFields: ["runtimeId", "lockfileId", "manifestPaths"],
   })),
   documentation: languageNames.map(([id, name]) => ({
     id: `docs-${id}`,
@@ -99,3 +101,11 @@ export const validEcosystem: EcosystemDocument = {
 };
 
 export const languageIdentities = languageNames.map(([id]) => id);
+
+export function invariantForLanguage(
+  languageId: string,
+): InvariantRule | undefined {
+  return validEcosystem.invariants.find(
+    (invariant) => invariant.languageId === languageId,
+  );
+}

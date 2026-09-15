@@ -3,7 +3,9 @@ import { validEcosystem } from "./catalog.js";
 import {
   validateAgentConfig,
   validateEcosystem,
+  validateInvariants,
   validatePurl,
+  validateSkills,
 } from "./validators.js";
 
 describe("shared schema contracts", () => {
@@ -60,5 +62,69 @@ describe("shared schema contracts", () => {
     });
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.schemaVersion).toBe("2.0");
+  });
+
+  it("requires every language relationship and the complete vocabulary", () => {
+    const result = validateEcosystem(validEcosystem);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.data.languages).toHaveLength(25);
+      expect(
+        result.data.languages.every(
+          (language) => language.invariantIds.length > 0,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects malformed PURLs", () => {
+    expect(
+      validatePurl({ type: "npm", name: "@scope/pkg", version: "1.0.0" }).valid,
+    ).toBe(true);
+    expect(
+      validatePurl({ type: "npm", name: "bad value", version: "1.0.0" }).valid,
+    ).toBe(false);
+  });
+
+  it("validates agent, skills, and invariant documents", () => {
+    expect(
+      validateAgentConfig({
+        schemaVersion: "1.0",
+        project: "fixture",
+        mode: "declarative",
+        runtimeOwners: { typescript: "local" },
+        safeCommands: ["sibyl check --json"],
+        manifestEvidence: [
+          {
+            path: "package.json",
+            kind: "package",
+            languageId: "typescript",
+            runtimeId: "runtime-typescript",
+          },
+        ],
+        invariantIds: ["invariant-typescript"],
+        remoteMutationRequiresExplicitCommand: true,
+        remoteEvidenceIsSeparate: true,
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateSkills({
+        schemaVersion: "1.0",
+        skills: [{ id: "schemas", scope: "workspace", declarative: true }],
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateInvariants({
+        schemaVersion: "1.0",
+        rules: [
+          {
+            id: "invariant-typescript",
+            kind: "declared-runtime-and-lockfile",
+            languageId: "typescript",
+            evidenceFields: ["runtimeId"],
+          },
+        ],
+      }).valid,
+    ).toBe(true);
   });
 });

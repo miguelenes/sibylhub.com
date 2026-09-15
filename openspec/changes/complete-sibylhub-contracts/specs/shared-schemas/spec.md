@@ -1,10 +1,4 @@
-# shared-schemas Specification
-
-## Purpose
-
-Provide versioned, language-neutral contracts that keep ecosystem metadata, agent configuration, skills, package URLs, and stack invariants consistent across all SibylHub applications.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Shared contracts have versioned machine-readable representations
 
@@ -37,30 +31,6 @@ The ecosystem contract SHALL represent the configured catalog of target programm
 #### Scenario: A catalog entry has incomplete package identity
 - **WHEN** a catalog entry contains an incomplete PURL or omits a required identity field
 - **THEN** validation fails at the affected entry and no substitute package identity is inferred
-
-### Requirement: Package URLs use a canonical portable contract
-
-The shared contract SHALL validate package URLs according to the PURL specification, SHALL preserve the package type, namespace, name, version, qualifiers, and subpath when present, and SHALL provide a normalized representation suitable for comparison across package managers.
-
-#### Scenario: A valid package URL is normalized
-- **WHEN** a consumer submits a syntactically valid PURL with optional qualifiers or subpath
-- **THEN** validation succeeds and returns a canonical representation without dropping meaningful components
-
-#### Scenario: An invalid package URL is submitted
-- **WHEN** a consumer submits a malformed or incomplete PURL
-- **THEN** validation fails with a field-level diagnostic and no guessed package identity is emitted
-
-### Requirement: Agent and invariant documents are safe to consume
-
-The `.agent/` and stack-invariant contracts SHALL distinguish declarative project metadata from executable instructions, SHALL validate allowed fields and types, and SHALL reject embedded credentials, private keys, or unsupported execution directives.
-
-#### Scenario: A project configuration is inspected
-- **WHEN** a valid `.agent/config.json`, skills document, or invariant rule is loaded
-- **THEN** it yields declarative metadata and validation rules without requiring code execution or network access
-
-#### Scenario: A secret-bearing or executable field is supplied
-- **WHEN** a document contains a credential, private key, or unsupported executable directive
-- **THEN** schema validation fails and the value is not returned as an accepted contract field
 
 ### Requirement: Contract artifacts are consumable by every workspace boundary
 

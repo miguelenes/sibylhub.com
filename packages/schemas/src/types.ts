@@ -1,4 +1,5 @@
 export const schemaVersion = "1.0" as const;
+export type SchemaVersion = typeof schemaVersion;
 
 export type Purl = {
   type: string;
@@ -25,15 +26,65 @@ export type EcosystemLanguage = CatalogEntry & {
 };
 
 export type EcosystemDocument = {
-  schemaVersion: typeof schemaVersion;
+  schemaVersion: SchemaVersion;
   revisionId: string;
   languages: EcosystemLanguage[];
   runtimes: CatalogEntry[];
   packageManagers: CatalogEntry[];
   lockfiles: CatalogEntry[];
   builders: CatalogEntry[];
-  invariants: Array<{ id: string; name: string; rule: string }>;
+  invariants: InvariantRule[];
   documentation: Array<{ id: string; path: string; title: string }>;
+};
+
+export type InvariantRule = {
+  id: string;
+  name: string;
+  languageId: string;
+  rule: "declared-runtime-and-lockfile" | string;
+  evidenceFields: string[];
+};
+
+export type ManifestEvidence = {
+  path: string;
+  kind: string;
+  languageId: string;
+  runtimeId: string;
+  packageManagerId?: string;
+  lockfileId?: string;
+};
+
+export type AgentConfig = {
+  schemaVersion: SchemaVersion;
+  project: string;
+  mode: "declarative";
+  runtimeOwners: Record<string, string>;
+  safeCommands: string[];
+  manifestEvidence: ManifestEvidence[];
+  invariantIds: string[];
+  remoteMutationRequiresExplicitCommand: true;
+  remoteEvidenceIsSeparate: true;
+};
+
+export type SkillDefinition = {
+  id: string;
+  scope: string;
+  declarative: true;
+};
+
+export type SkillsDocument = {
+  schemaVersion: SchemaVersion;
+  skills: SkillDefinition[];
+};
+
+export type InvariantDocument = {
+  schemaVersion: SchemaVersion;
+  rules: Array<{
+    id: string;
+    kind: string;
+    languageId: string;
+    evidenceFields: string[];
+  }>;
 };
 
 export type ValidationIssue = {
@@ -43,5 +94,5 @@ export type ValidationIssue = {
 };
 
 export type ValidationResult<T> =
-  | { valid: true; data: T; schemaVersion: typeof schemaVersion; issues: [] }
+  | { valid: true; data: T; schemaVersion: SchemaVersion; issues: [] }
   | { valid: false; schemaVersion?: string; issues: ValidationIssue[] };

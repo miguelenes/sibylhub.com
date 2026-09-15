@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "9.9",
+  "schemaVersion": "1.0",
   "revisionId": "local-bootstrap-1",
   "languages": [
     {
@@ -10,7 +10,7 @@
         "name": "c",
         "version": "managed"
       },
-      "runtimeId": "runtime-c",
+      "runtimeId": "runtime-missing",
       "packageManagerId": "package-manager-c",
       "lockfileId": "lockfile-c",
       "builderId": "builder-c",

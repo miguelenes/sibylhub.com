@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
 const languages = [
@@ -29,6 +30,7 @@ const languages = [
   ["powershell", "PowerShell", "nuget"],
   ["sql", "SQL", "generic"],
 ];
+
 const catalogEntry = (id, name, type = "generic") => ({
   id,
   name,
@@ -61,7 +63,9 @@ const validEcosystem = {
   invariants: languages.map(([id, name]) => ({
     id: `invariant-${id}`,
     name: `${name} baseline`,
+    languageId: id,
     rule: "declared-runtime-and-lockfile",
+    evidenceFields: ["runtimeId", "lockfileId", "manifestPaths"],
   })),
   documentation: languages.map(([id, name]) => ({
     id: `docs-${id}`,
@@ -69,7 +73,28 @@ const validEcosystem = {
     title: `${name} ecosystem`,
   })),
 };
-const schema = {
+
+const stringId = { type: "string", minLength: 1 };
+const purl = {
+  type: "object",
+  required: ["type", "name", "version"],
+  properties: {
+    type: { type: "string", pattern: "^[a-z0-9][a-z0-9.+-]*$" },
+    namespace: { type: "string", minLength: 1 },
+    name: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    version: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    qualifiers: { type: "object", additionalProperties: { type: "string" } },
+    subpath: { type: "string", minLength: 1, pattern: "^\\S+$" },
+  },
+  additionalProperties: false,
+};
+const catalogEntrySchema = {
+  type: "object",
+  required: ["id", "name", "purl"],
+  properties: { id: stringId, name: stringId, purl },
+  additionalProperties: false,
+};
+const ecosystem = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://sibylhub.com/schema/ecosystem/1.0",
   title: "SibylHub ecosystem document",
@@ -87,23 +112,242 @@ const schema = {
   ],
   properties: {
     schemaVersion: { const: "1.0" },
-    revisionId: { type: "string" },
-    languages: { type: "array", minItems: 25, maxItems: 25 },
-    runtimes: { type: "array" },
-    packageManagers: { type: "array" },
-    lockfiles: { type: "array" },
-    builders: { type: "array" },
-    invariants: { type: "array" },
-    documentation: { type: "array" },
+    revisionId: stringId,
+    languages: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: {
+        ...catalogEntrySchema,
+        required: [
+          ...catalogEntrySchema.required,
+          "runtimeId",
+          "packageManagerId",
+          "lockfileId",
+          "builderId",
+          "invariantIds",
+          "documentationId",
+        ],
+        properties: {
+          ...catalogEntrySchema.properties,
+          runtimeId: stringId,
+          packageManagerId: stringId,
+          lockfileId: stringId,
+          builderId: stringId,
+          invariantIds: { type: "array", minItems: 1, items: stringId },
+          documentationId: stringId,
+        },
+      },
+    },
+    runtimes: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: catalogEntrySchema,
+    },
+    packageManagers: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: catalogEntrySchema,
+    },
+    lockfiles: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: catalogEntrySchema,
+    },
+    builders: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: catalogEntrySchema,
+    },
+    invariants: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: {
+        type: "object",
+        required: ["id", "name", "languageId", "rule", "evidenceFields"],
+        properties: {
+          id: stringId,
+          name: stringId,
+          languageId: stringId,
+          rule: stringId,
+          evidenceFields: { type: "array", minItems: 1, items: stringId },
+        },
+        additionalProperties: false,
+      },
+    },
+    documentation: {
+      type: "array",
+      minItems: 25,
+      maxItems: 25,
+      items: {
+        type: "object",
+        required: ["id", "path", "title"],
+        properties: {
+          id: stringId,
+          path: { type: "string", pattern: "^docs/" },
+          title: stringId,
+        },
+        additionalProperties: false,
+      },
+    },
   },
   additionalProperties: false,
 };
+
+const agentConfig = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/agent-config/1.0",
+  title: "SibylHub agent configuration",
+  type: "object",
+  required: [
+    "schemaVersion",
+    "project",
+    "mode",
+    "runtimeOwners",
+    "safeCommands",
+    "manifestEvidence",
+    "invariantIds",
+    "remoteMutationRequiresExplicitCommand",
+    "remoteEvidenceIsSeparate",
+  ],
+  properties: {
+    schemaVersion: { const: "1.0" },
+    project: stringId,
+    mode: { const: "declarative" },
+    runtimeOwners: { type: "object", additionalProperties: stringId },
+    safeCommands: { type: "array", items: stringId },
+    manifestEvidence: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["path", "kind", "languageId", "runtimeId"],
+        properties: {
+          path: stringId,
+          kind: stringId,
+          languageId: stringId,
+          runtimeId: stringId,
+          packageManagerId: stringId,
+          lockfileId: stringId,
+        },
+        additionalProperties: false,
+      },
+    },
+    invariantIds: { type: "array", items: stringId },
+    remoteMutationRequiresExplicitCommand: { const: true },
+    remoteEvidenceIsSeparate: { const: true },
+  },
+  additionalProperties: false,
+};
+const skills = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/skills/1.0",
+  title: "SibylHub skills document",
+  type: "object",
+  required: ["schemaVersion", "skills"],
+  properties: {
+    schemaVersion: { const: "1.0" },
+    skills: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "scope", "declarative"],
+        properties: {
+          id: stringId,
+          scope: stringId,
+          declarative: { const: true },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
+const invariants = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/invariants/1.0",
+  title: "SibylHub invariant rules",
+  type: "object",
+  required: ["schemaVersion", "rules"],
+  properties: {
+    schemaVersion: { const: "1.0" },
+    rules: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "kind", "languageId", "evidenceFields"],
+        properties: {
+          id: stringId,
+          kind: stringId,
+          languageId: stringId,
+          evidenceFields: { type: "array", minItems: 1, items: stringId },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
+
+const agentFixture = {
+  schemaVersion: "1.0",
+  project: "sibylhub",
+  mode: "declarative",
+  runtimeOwners: { "runtime-typescript": "workspace" },
+  safeCommands: ["sibyl check --json"],
+  manifestEvidence: [
+    {
+      path: "package.json",
+      kind: "package-manifest",
+      languageId: "typescript",
+      runtimeId: "runtime-typescript",
+      packageManagerId: "package-manager-typescript",
+      lockfileId: "lockfile-typescript",
+    },
+  ],
+  invariantIds: ["invariant-typescript"],
+  remoteMutationRequiresExplicitCommand: true,
+  remoteEvidenceIsSeparate: true,
+};
+const skillsFixture = {
+  schemaVersion: "1.0",
+  skills: [
+    { id: "local-contract-check", scope: "workspace", declarative: true },
+  ],
+};
+const invariantsFixture = {
+  schemaVersion: "1.0",
+  rules: validEcosystem.invariants.map(
+    ({ id, rule, languageId, evidenceFields }) => ({
+      id,
+      kind: rule,
+      languageId,
+      evidenceFields,
+    }),
+  ),
+};
+
 await mkdir(resolve(root, "json-schema"), { recursive: true });
 await mkdir(resolve(root, "fixtures"), { recursive: true });
-await mkdir(resolve(root, "dist"), { recursive: true });
 await writeFile(
   resolve(root, "json-schema/ecosystem-1.0.json"),
-  `${JSON.stringify(schema, null, 2)}\n`,
+  `${JSON.stringify(ecosystem, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "json-schema/agent-config-1.0.json"),
+  `${JSON.stringify(agentConfig, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "json-schema/skills-1.0.json"),
+  `${JSON.stringify(skills, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "json-schema/invariants-1.0.json"),
+  `${JSON.stringify(invariants, null, 2)}\n`,
 );
 await writeFile(
   resolve(root, "fixtures/valid-ecosystem.json"),
@@ -118,19 +362,34 @@ await writeFile(
   `${JSON.stringify({ ...validEcosystem, schemaVersion: "9.9" }, null, 2)}\n`,
 );
 await writeFile(
+  resolve(root, "fixtures/unresolved-ecosystem.json"),
+  `${JSON.stringify({ ...validEcosystem, languages: validEcosystem.languages.map((language, index) => (index === 0 ? { ...language, runtimeId: "runtime-missing" } : language)) }, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/valid-agent.json"),
+  `${JSON.stringify(agentFixture, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/valid-skills.json"),
+  `${JSON.stringify(skillsFixture, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/valid-invariants.json"),
+  `${JSON.stringify(invariantsFixture, null, 2)}\n`,
+);
+await writeFile(
   resolve(root, "fixtures/unsafe-agent.json"),
-  `${JSON.stringify({ schemaVersion: "1.0", project: "invalid", mode: "declarative", runtimeOwners: {}, safeCommands: [], remoteMutationRequiresExplicitCommand: true, remoteEvidenceIsSeparate: true, password: "must-not-parse" }, null, 2)}\n`,
+  `${JSON.stringify({ ...agentFixture, password: "must-not-parse" }, null, 2)}\n`,
 );
 await writeFile(
   resolve(root, "fixtures/malformed-ecosystem.json"),
   '{"schemaVersion":"1.0","languages":[\n',
 );
-await writeFile(
-  resolve(root, "dist/index.js"),
-  `export * from "../src/index.js";\n`,
+
+const compile = spawnSync(
+  "pnpm",
+  ["exec", "tsc", "--project", resolve(root, "tsconfig.json")],
+  { stdio: "inherit" },
 );
-await writeFile(
-  resolve(root, "dist/catalog.js"),
-  `export { validEcosystem } from "../src/catalog.js";\n`,
-);
+if (compile.status !== 0) process.exit(compile.status ?? 1);
 console.log("schemas built");

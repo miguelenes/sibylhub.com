@@ -1340,127 +1340,277 @@
     {
       "id": "invariant-c",
       "name": "C baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "c",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-cpp",
       "name": "C++ baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "cpp",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-csharp",
       "name": "C# baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "csharp",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-dart",
       "name": "Dart baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "dart",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-elixir",
       "name": "Elixir baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "elixir",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-go",
       "name": "Go baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "go",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-haskell",
       "name": "Haskell baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "haskell",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-java",
       "name": "Java baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "java",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-javascript",
       "name": "JavaScript baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "javascript",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-kotlin",
       "name": "Kotlin baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "kotlin",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-lua",
       "name": "Lua baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "lua",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-objective-c",
       "name": "Objective-C baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "objective-c",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-perl",
       "name": "Perl baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "perl",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-php",
       "name": "PHP baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "php",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-python",
       "name": "Python baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "python",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-r",
       "name": "R baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "r",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-ruby",
       "name": "Ruby baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "ruby",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-rust",
       "name": "Rust baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "rust",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-scala",
       "name": "Scala baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "scala",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-swift",
       "name": "Swift baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "swift",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-typescript",
       "name": "TypeScript baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "typescript",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-zig",
       "name": "Zig baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "zig",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-shell",
       "name": "Shell baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "shell",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-powershell",
       "name": "PowerShell baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "powershell",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     },
     {
       "id": "invariant-sql",
       "name": "SQL baseline",
-      "rule": "declared-runtime-and-lockfile"
+      "languageId": "sql",
+      "rule": "declared-runtime-and-lockfile",
+      "evidenceFields": [
+        "runtimeId",
+        "lockfileId",
+        "manifestPaths"
+      ]
     }
   ],
   "documentation": [

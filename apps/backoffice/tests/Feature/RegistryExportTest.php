@@ -39,6 +39,32 @@ class RegistryExportTest extends TestCase
         $this->assertCount(25, $second['payload']['languages']);
     }
 
+    public function test_reordered_equivalent_source_data_exports_identically(): void
+    {
+        $service = app(RegistryExportService::class);
+        $first = $service->export();
+        $revision = RegistryRevision::query()->where('stable_id', $first['revision'])->firstOrFail();
+        $payload = $revision->payload;
+        foreach (['languages', 'runtimes', 'packageManagers', 'lockfiles', 'builders', 'invariants', 'documentation'] as $collection) {
+            $payload[$collection] = array_reverse($payload[$collection]);
+        }
+        $revision->update(['payload' => $payload]);
+
+        $second = $service->export($revision->fresh());
+        $this->assertSame(file_get_contents($first['path']), file_get_contents($second['path']));
+    }
+
+    public function test_export_fails_without_a_validated_revision(): void
+    {
+        RegistryEntryRelationship::query()->delete();
+        RegistryEntry::query()->delete();
+        RegistryRevision::query()->delete();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('validated registry revision');
+        app(RegistryExportService::class)->export();
+    }
+
     public function test_incomplete_revision_cannot_be_exported(): void
     {
         $revision = RegistryRevision::query()->create([
