@@ -10,9 +10,7 @@
       "name": "shell",
       "version": "managed"
     },
-    "extensions": [
-      ".shell"
-    ]
+    "extensions": [".shell"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-shell",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "shell build",
-      "languageIds": [
-        "shell"
-      ]
+      "languageIds": ["shell"]
     }
   ],
   "invariants": [

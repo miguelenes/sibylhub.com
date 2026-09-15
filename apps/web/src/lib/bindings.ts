@@ -66,11 +66,8 @@ export async function readRuntimeBindings(bindings?: RuntimeBindings): Promise<{
   };
 }
 
-export function readRuntimeEnv(locals: unknown): RuntimeEnv {
-  if (typeof locals !== "object" || locals === null) return {};
-  const runtime = (locals as { runtime?: unknown }).runtime;
-  if (typeof runtime !== "object" || runtime === null) return {};
-  const env = (runtime as { env?: unknown }).env;
+/** Normalize Cloudflare Workers `env` into the RuntimeEnv shape used by services. */
+export function readRuntimeEnv(env: unknown): RuntimeEnv {
   if (typeof env !== "object" || env === null) return {};
   return env as RuntimeEnv;
 }

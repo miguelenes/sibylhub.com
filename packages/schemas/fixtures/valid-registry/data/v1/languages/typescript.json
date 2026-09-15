@@ -10,9 +10,7 @@
       "name": "typescript",
       "version": "managed"
     },
-    "extensions": [
-      ".typescript"
-    ]
+    "extensions": [".typescript"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-typescript",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "typescript build",
-      "languageIds": [
-        "typescript"
-      ]
+      "languageIds": ["typescript"]
     }
   ],
   "invariants": [

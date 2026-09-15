@@ -10,9 +10,7 @@
       "name": "dart",
       "version": "managed"
     },
-    "extensions": [
-      ".dart"
-    ]
+    "extensions": [".dart"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-dart",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "dart build",
-      "languageIds": [
-        "dart"
-      ]
+      "languageIds": ["dart"]
     }
   ],
   "invariants": [

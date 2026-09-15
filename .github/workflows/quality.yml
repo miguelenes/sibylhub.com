@@ -12,15 +12,32 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          tools: composer
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install backoffice PHP dependencies
+        working-directory: apps/backoffice
+        run: |
+          cp -n .env.example .env
+          mkdir -p database
+          touch database/database.sqlite
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          php artisan key:generate --ansi
+          php artisan migrate --force --ansi
       - run: pnpm check:config
       - run: pnpm lint
       - run: pnpm typecheck

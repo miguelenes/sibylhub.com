@@ -1,5 +1,9 @@
 /// <reference types="astro/client" />
 
+declare module "cloudflare:workers" {
+  export const env: import("./lib/bindings").RuntimeEnv;
+}
+
 type D1Database = {
   prepare(query: string): D1PreparedStatement;
 };

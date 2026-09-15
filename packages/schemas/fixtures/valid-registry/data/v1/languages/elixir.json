@@ -10,9 +10,7 @@
       "name": "elixir",
       "version": "managed"
     },
-    "extensions": [
-      ".elixir"
-    ]
+    "extensions": [".elixir"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-elixir",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "elixir build",
-      "languageIds": [
-        "elixir"
-      ]
+      "languageIds": ["elixir"]
     }
   ],
   "invariants": [

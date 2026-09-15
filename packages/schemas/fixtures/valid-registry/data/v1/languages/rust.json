@@ -10,9 +10,7 @@
       "name": "rust",
       "version": "managed"
     },
-    "extensions": [
-      ".rust"
-    ]
+    "extensions": [".rust"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-rust",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "rust build",
-      "languageIds": [
-        "rust"
-      ]
+      "languageIds": ["rust"]
     }
   ],
   "invariants": [

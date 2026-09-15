@@ -10,9 +10,7 @@
       "name": "r",
       "version": "managed"
     },
-    "extensions": [
-      ".r"
-    ]
+    "extensions": [".r"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-r",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "r build",
-      "languageIds": [
-        "r"
-      ]
+      "languageIds": ["r"]
     }
   ],
   "invariants": [

@@ -10,9 +10,7 @@
       "name": "php",
       "version": "managed"
     },
-    "extensions": [
-      ".php"
-    ]
+    "extensions": [".php"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-php",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "php build",
-      "languageIds": [
-        "php"
-      ]
+      "languageIds": ["php"]
     }
   ],
   "invariants": [

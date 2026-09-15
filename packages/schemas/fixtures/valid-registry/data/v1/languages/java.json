@@ -10,9 +10,7 @@
       "name": "java",
       "version": "managed"
     },
-    "extensions": [
-      ".java"
-    ]
+    "extensions": [".java"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-java",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "java build",
-      "languageIds": [
-        "java"
-      ]
+      "languageIds": ["java"]
     }
   ],
   "invariants": [

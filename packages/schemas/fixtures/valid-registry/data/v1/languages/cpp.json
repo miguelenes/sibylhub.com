@@ -10,9 +10,7 @@
       "name": "cpp",
       "version": "managed"
     },
-    "extensions": [
-      ".cpp"
-    ]
+    "extensions": [".cpp"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-cpp",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "cpp build",
-      "languageIds": [
-        "cpp"
-      ]
+      "languageIds": ["cpp"]
     }
   ],
   "invariants": [

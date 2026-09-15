@@ -25,7 +25,7 @@ SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registr
 
 ## Prerequisites and setup
 
-Use Node 20.19.0 or a later Node 20 LTS release, pnpm 9.15.9, PHP 8.3 or later, Composer, and Rust 1.82 or later. The repository records these expectations in `.nvmrc`, `.node-version`, `rust-toolchain.toml`, and the package manifests.
+Use Node 22.12.0 or a later Node 22 LTS release, pnpm 9.15.9, PHP 8.3 or later, Composer, and Rust 1.98 or later. The repository records these expectations in `.nvmrc`, `.node-version`, `rust-toolchain.toml`, and the package manifests.
 
 ```sh
 corepack enable
