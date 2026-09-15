@@ -10,9 +10,7 @@
       "name": "zig",
       "version": "managed"
     },
-    "extensions": [
-      ".zig"
-    ]
+    "extensions": [".zig"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-zig",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "zig build",
-      "languageIds": [
-        "zig"
-      ]
+      "languageIds": ["zig"]
     }
   ],
   "invariants": [

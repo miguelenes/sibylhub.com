@@ -4,6 +4,7 @@ import {
   type ApiErrorEnvelope,
   type ProjectContextResponse,
 } from "@sibylhub/api-client";
+import { env } from "cloudflare:workers";
 import { readRuntimeEnv } from "../../../lib/bindings";
 import { readProjectContext } from "../../../lib/context-service";
 
@@ -24,7 +25,7 @@ function response(
   });
 }
 
-export async function GET({ locals, url }: { locals: unknown; url: URL }) {
+export async function GET({ url }: { url: URL }) {
   const requestedProjectId = url.searchParams.get("project_id") ?? undefined;
   if (requestedProjectId && !isSafeProjectId(requestedProjectId))
     return response(
@@ -32,11 +33,11 @@ export async function GET({ locals, url }: { locals: unknown; url: URL }) {
       400,
     );
 
-  const env = readRuntimeEnv(locals);
+  const runtimeEnv = readRuntimeEnv(env);
   const result = await readProjectContext(
-    env,
+    runtimeEnv,
     requestedProjectId,
-    env.SIBYL_ACTIVE_PROJECT_ID,
+    runtimeEnv.SIBYL_ACTIVE_PROJECT_ID,
   );
   if (result.ok) return response(result.data);
   if (result.kind === "not_found")

@@ -9,7 +9,7 @@ const required = [
   'binding = "DB"',
   'binding = "AST_STORAGE"',
   'binding = "VECTORIZE_INDEX"',
-  'main = "./dist/_worker.js/index.js"',
+  'main = "@astrojs/cloudflare/entrypoints/server"',
 ];
 const missing = required.filter((entry) => !config.includes(entry));
 const hasFakeRemoteTarget = /account_id\s*=|database_id\s*=\s*"(?!local)/.test(

@@ -10,9 +10,7 @@
       "name": "perl",
       "version": "managed"
     },
-    "extensions": [
-      ".perl"
-    ]
+    "extensions": [".perl"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-perl",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "perl build",
-      "languageIds": [
-        "perl"
-      ]
+      "languageIds": ["perl"]
     }
   ],
   "invariants": [

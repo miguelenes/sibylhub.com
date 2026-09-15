@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeEnv } from "./bindings";
+
+const { workersEnv } = vi.hoisted(() => ({
+  workersEnv: {} as RuntimeEnv,
+}));
+
+vi.mock("cloudflare:workers", () => ({
+  env: workersEnv,
+}));
+
 import { GET } from "../pages/api/project/context";
 import { readProjectContext } from "./context-service";
 
@@ -63,6 +73,17 @@ function database(options: { missing?: boolean; invalid?: boolean } = {}) {
   };
 }
 
+function resetWorkersEnv(next: RuntimeEnv = {}) {
+  for (const key of Object.keys(workersEnv)) {
+    delete workersEnv[key as keyof RuntimeEnv];
+  }
+  Object.assign(workersEnv, next);
+}
+
+beforeEach(() => {
+  resetWorkersEnv();
+});
+
 describe("project context service", () => {
   it("returns a deterministic local snapshot without Rust or Cloudflare bindings", async () => {
     const result = await readProjectContext({});
@@ -116,7 +137,6 @@ describe("project context service", () => {
 describe("GET /api/project/context", () => {
   it("returns five partitions and stable local data", async () => {
     const response = await GET({
-      locals: {},
       url: new URL("https://sibylhub.test/api/project/context"),
     });
     const body = await response.json();
@@ -128,7 +148,6 @@ describe("GET /api/project/context", () => {
 
   it("rejects malformed selection and reports unknown local projects safely", async () => {
     const malformed = await GET({
-      locals: {},
       url: new URL(
         "https://sibylhub.test/api/project/context?project_id=not%20safe",
       ),
@@ -139,7 +158,6 @@ describe("GET /api/project/context", () => {
     });
 
     const unknown = await GET({
-      locals: {},
       url: new URL(
         "https://sibylhub.test/api/project/context?project_id=other-project",
       ),
@@ -151,15 +169,11 @@ describe("GET /api/project/context", () => {
   });
 
   it("maps configured-source failures to a safe 503 response", async () => {
+    resetWorkersEnv({
+      DB: database({ invalid: true }),
+      SIBYL_ACTIVE_PROJECT_ID: "demo-project",
+    });
     const unavailable = await GET({
-      locals: {
-        runtime: {
-          env: {
-            DB: database({ invalid: true }),
-            SIBYL_ACTIVE_PROJECT_ID: "demo-project",
-          },
-        },
-      },
       url: new URL("https://sibylhub.test/api/project/context"),
     });
 

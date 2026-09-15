@@ -1,5 +1,6 @@
 ---
 import { isSafeProjectId } from "@sibylhub/api-client";
+import { env } from "cloudflare:workers";
 import CockpitLayout from "../layouts/CockpitLayout.astro";
 import { DependencyAuditView } from "../components/DependencyAuditView";
 import { FastMcpSkillCatalog } from "../components/FastMcpSkillCatalog";
@@ -11,7 +12,7 @@ import { readProjectContext } from "../lib/context-service";
 import { getLocalProjectContext } from "../lib/fixtures";
 import "../styles/global.css";
 
-const runtimeEnv = readRuntimeEnv(Astro.locals);
+const runtimeEnv = readRuntimeEnv(env);
 const requestedProjectId =
   Astro.url.searchParams.get("project_id") ?? undefined;
 const projectSelectionIsSafe =

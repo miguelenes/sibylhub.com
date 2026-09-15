@@ -10,9 +10,7 @@
       "name": "c",
       "version": "managed"
     },
-    "extensions": [
-      ".c"
-    ]
+    "extensions": [".c"]
   },
   "runtimes": [
     {
@@ -94,13 +92,9 @@
         "name": "builder-c",
         "version": "managed"
       },
-      "configurationFiles": [
-        "manifest.json"
-      ],
+      "configurationFiles": ["manifest.json"],
       "runCommand": "c build",
-      "languageIds": [
-        "c"
-      ]
+      "languageIds": ["c"]
     }
   ],
   "invariants": [

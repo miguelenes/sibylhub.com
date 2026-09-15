@@ -64,9 +64,9 @@ const bindings = ["DB", "AST_STORAGE", "VECTORIZE_INDEX"].filter(
 );
 const runtimePins = {
   packageManager: rootPackage.packageManager === "pnpm@9.15.9",
-  node: readFileSync(join(root, ".nvmrc"), "utf8").trim() === "20.19.0",
+  node: readFileSync(join(root, ".nvmrc"), "utf8").trim() === "22.12.0",
   rust: readFileSync(join(root, "rust-toolchain.toml"), "utf8").includes(
-    'channel = "1.82.0"',
+    'channel = "1.98.1"',
   ),
 };
 

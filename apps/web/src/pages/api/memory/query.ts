@@ -3,6 +3,7 @@ import {
   type ApiErrorEnvelope,
   type MemoryQueryResponse,
 } from "@sibylhub/api-client";
+import { env } from "cloudflare:workers";
 import { readRuntimeEnv } from "../../../lib/bindings";
 import { queryMemory } from "../../../lib/memory-service";
 
@@ -23,13 +24,7 @@ function response(
   });
 }
 
-export async function POST({
-  locals,
-  request,
-}: {
-  locals: unknown;
-  request: Request;
-}) {
+export async function POST({ request }: { request: Request }) {
   let body: unknown;
   try {
     body = await request.json();
@@ -37,9 +32,9 @@ export async function POST({
     return response(safeError("INVALID_REQUEST", "Invalid JSON request"), 400);
   }
 
-  const env = readRuntimeEnv(locals);
-  const result = await queryMemory(body, env, {
-    activeProjectId: env.SIBYL_ACTIVE_PROJECT_ID,
+  const runtimeEnv = readRuntimeEnv(env);
+  const result = await queryMemory(body, runtimeEnv, {
+    activeProjectId: runtimeEnv.SIBYL_ACTIVE_PROJECT_ID,
   });
   if (result.ok) return response(result.data);
   if (result.kind === "invalid_request")

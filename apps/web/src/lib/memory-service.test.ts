@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeBindings, RuntimeEnv } from "./bindings";
+
+const { workersEnv } = vi.hoisted(() => ({
+  workersEnv: {} as RuntimeEnv,
+}));
+
+vi.mock("cloudflare:workers", () => ({
+  env: workersEnv,
+}));
+
 import { POST } from "../pages/api/memory/query";
-import type { RuntimeBindings } from "./bindings";
 import { queryMemory } from "./memory-service";
 
 const metadataRow = {
@@ -52,6 +61,17 @@ function bindings(options: { empty?: boolean } = {}) {
   };
   return { value, calls };
 }
+
+function resetWorkersEnv(next: RuntimeEnv = {}) {
+  for (const key of Object.keys(workersEnv)) {
+    delete workersEnv[key as keyof RuntimeEnv];
+  }
+  Object.assign(workersEnv, next);
+}
+
+beforeEach(() => {
+  resetWorkersEnv();
+});
 
 describe("memory service", () => {
   it("rejects unsafe input before calling semantic services", async () => {
@@ -121,7 +141,6 @@ describe("memory service", () => {
 describe("POST /api/memory/query", () => {
   it("returns stable 400 and 503 envelopes without leaking request or provider details", async () => {
     const malformed = await POST({
-      locals: {},
       request: new Request("https://sibylhub.test/api/memory/query", {
         method: "POST",
         body: "{",
@@ -133,7 +152,6 @@ describe("POST /api/memory/query", () => {
     });
 
     const unavailable = await POST({
-      locals: {},
       request: new Request("https://sibylhub.test/api/memory/query", {
         method: "POST",
         body: JSON.stringify({ query: "private architecture query" }),
@@ -152,12 +170,11 @@ describe("POST /api/memory/query", () => {
 
   it("returns an explicit empty result when the configured fixture is complete", async () => {
     const fixture = bindings({ empty: true });
+    resetWorkersEnv({
+      ...fixture.value,
+      SIBYL_ACTIVE_PROJECT_ID: "demo-project",
+    });
     const response = await POST({
-      locals: {
-        runtime: {
-          env: { ...fixture.value, SIBYL_ACTIVE_PROJECT_ID: "demo-project" },
-        },
-      },
       request: new Request("https://sibylhub.test/api/memory/query", {
         method: "POST",
         body: JSON.stringify({ query: "architecture" }),
@@ -178,12 +195,11 @@ describe("POST /api/memory/query", () => {
         throw new Error("provider detail must not escape");
       },
     };
+    resetWorkersEnv({
+      ...fixture.value,
+      SIBYL_ACTIVE_PROJECT_ID: "demo-project",
+    });
     const response = await POST({
-      locals: {
-        runtime: {
-          env: { ...fixture.value, SIBYL_ACTIVE_PROJECT_ID: "demo-project" },
-        },
-      },
       request: new Request("https://sibylhub.test/api/memory/query", {
         method: "POST",
         body: JSON.stringify({ query: "architecture" }),
