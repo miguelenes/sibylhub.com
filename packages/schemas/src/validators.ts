@@ -6,6 +6,7 @@ import type {
   InvariantDocument,
   LanguageArtifact,
   LegacyEcosystemDocument,
+  MemoriesDocument,
   Purl,
   RegistryArtifactSet,
   RegistryIndex,
@@ -257,6 +258,20 @@ const skillsSchema = z
     ),
   })
   .strict();
+const memoriesSchema = z
+  .object({
+    schemaVersion: z.literal("1.0"),
+    memories: z.array(
+      z
+        .object({
+          title: id,
+          content: id,
+          category: id,
+        })
+        .strict(),
+    ),
+  })
+  .strict();
 const invariantsSchema = z
   .object({
     schemaVersion: z.literal("1.0"),
@@ -475,6 +490,11 @@ export function validateSkills(
   input: unknown,
 ): ValidationResult<SkillsDocument> {
   return parse(skillsSchema, input, "1.0");
+}
+export function validateMemories(
+  input: unknown,
+): ValidationResult<MemoriesDocument> {
+  return parse(memoriesSchema, input, "1.0");
 }
 export function validateInvariants(
   input: unknown,

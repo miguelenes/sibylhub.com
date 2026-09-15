@@ -57,6 +57,8 @@ The environment examples contain shape only. Copy them to local environment file
 
 Package manifests document native commands. `packages/design-system` is owned by pnpm, builds ESM/declaration output plus `dist/styles/globals.css`, and provides the shared token stylesheet to the Filament theme. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer while consuming frontend assets through pnpm/Vite, and Rust uses Cargo. `wrangler deploy`, registry publication, database migrations, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
 
+The workstation CLI command tree and its local registry/synchronization boundaries are documented in [`apps/cli/README.md`](apps/cli/README.md). Its release binary is `target/release/sibyl`.
+
 ## Evidence boundary
 
 Passing local checks proves only that the checked-out source works in the local environment. It does not prove Cloudflare resources, DNS, production databases, remote storage, provider authentication, deployment, or synchronization convergence. Remote operations require a separately selected target, authorization, and readback.

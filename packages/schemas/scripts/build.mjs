@@ -267,6 +267,30 @@ const skills = {
   },
   additionalProperties: false,
 };
+const memories = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/memories/1.0",
+  title: "SibylHub agent memories",
+  type: "object",
+  required: ["schemaVersion", "memories"],
+  properties: {
+    schemaVersion: { const: "1.0" },
+    memories: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "content", "category"],
+        properties: {
+          title: stringId,
+          content: stringId,
+          category: stringId,
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
 const invariants = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://sibylhub.com/schema/invariants/1.0",
@@ -319,6 +343,16 @@ const skillsFixture = {
     { id: "local-contract-check", scope: "workspace", declarative: true },
   ],
 };
+const memoriesFixture = {
+  schemaVersion: "1.0",
+  memories: [
+    {
+      title: "Use the local registry",
+      content: "Run checks against the committed registry snapshot.",
+      category: "invariant",
+    },
+  ],
+};
 const invariantsFixture = {
   schemaVersion: "1.0",
   rules: validEcosystem.invariants.map(
@@ -344,6 +378,10 @@ await writeFile(
 await writeFile(
   resolve(root, "json-schema/skills-1.0.json"),
   `${JSON.stringify(skills, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "json-schema/memories-1.0.json"),
+  `${JSON.stringify(memories, null, 2)}\n`,
 );
 await writeFile(
   resolve(root, "json-schema/invariants-1.0.json"),
@@ -372,6 +410,14 @@ await writeFile(
 await writeFile(
   resolve(root, "fixtures/valid-skills.json"),
   `${JSON.stringify(skillsFixture, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/valid-memories.json"),
+  `${JSON.stringify(memoriesFixture, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/malformed-memories.json"),
+  `${JSON.stringify({ schemaVersion: "1.0", memories: [{ title: "missing fields" }] }, null, 2)}\n`,
 );
 await writeFile(
   resolve(root, "fixtures/valid-invariants.json"),

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.0",
+  "memories": [
+    {
+      "title": "Use the local registry",
+      "content": "Run checks against the committed registry snapshot.",
+      "category": "invariant"
+    }
+  ]
+}

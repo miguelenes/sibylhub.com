@@ -6,6 +6,7 @@ import {
   validateLegacyEcosystem,
   validateInvariants,
   validateLanguageArtifact,
+  validateMemories,
   validatePurl,
   validateRegistryArtifactSet,
   validateRegistryIndex,
@@ -141,6 +142,18 @@ describe("shared schema contracts", () => {
       }).valid,
     ).toBe(true);
     expect(
+      validateMemories({
+        schemaVersion: "1.0",
+        memories: [
+          {
+            title: "Use the local registry",
+            content: "Run checks against the committed registry snapshot.",
+            category: "invariant",
+          },
+        ],
+      }).valid,
+    ).toBe(true);
+    expect(
       validateInvariants({
         schemaVersion: "1.0",
         rules: [
@@ -153,6 +166,40 @@ describe("shared schema contracts", () => {
         ],
       }).valid,
     ).toBe(true);
+  });
+
+  it("rejects malformed or unsafe memory entries", () => {
+    expect(
+      validateMemories({
+        schemaVersion: "1.0",
+        memories: [{ title: "missing content", category: "gotcha" }],
+      }).valid,
+    ).toBe(false);
+    expect(
+      validateMemories({
+        schemaVersion: "1.0",
+        memories: [
+          {
+            title: "unsafe",
+            content: "token: do-not-store",
+            category: "invariant",
+          },
+        ],
+      }).valid,
+    ).toBe(false);
+    expect(
+      validateMemories({
+        schemaVersion: "1.0",
+        memories: [
+          {
+            title: "unknown field",
+            content: "content",
+            category: "gotcha",
+            timestamp: "now",
+          },
+        ],
+      }).valid,
+    ).toBe(false);
   });
 
   it("validates one language artifact independently", () => {

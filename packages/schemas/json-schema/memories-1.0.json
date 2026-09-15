@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sibylhub.com/schema/memories/1.0",
+  "title": "SibylHub agent memories",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "memories"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "title",
+          "content",
+          "category"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

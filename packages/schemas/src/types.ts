@@ -205,6 +205,15 @@ export type SkillsDocument = {
   schemaVersion: LegacySchemaVersion;
   skills: SkillDefinition[];
 };
+export type MemoryEntry = {
+  title: string;
+  content: string;
+  category: string;
+};
+export type MemoriesDocument = {
+  schemaVersion: LegacySchemaVersion;
+  memories: MemoryEntry[];
+};
 export type InvariantDocument = {
   schemaVersion: LegacySchemaVersion;
   rules: Array<{

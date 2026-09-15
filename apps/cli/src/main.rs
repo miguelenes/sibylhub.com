@@ -1,42 +1,20 @@
+mod cli;
+mod error;
+mod policy;
+mod scanner;
+mod ui;
+
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
+use policy::{PolicyIndex, PolicyViolation};
+use scanner::{extract_dependencies, scan, ManifestEvidence};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "sibyl",
-    version,
-    about = "Read-only project checks and explicit synchronization"
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Debug, Subcommand)]
-enum Commands {
-    Init {
-        #[arg(long, default_value = ".")]
-        path: PathBuf,
-        #[arg(long)]
-        force: bool,
-    },
-    Check {
-        #[arg(long, default_value = ".")]
-        path: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    Sync {
-        #[arg(long)]
-        payload: PathBuf,
-    },
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,17 +39,34 @@ struct AgentConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ManifestEvidence {
-    path: String,
-    kind: String,
-    #[serde(rename = "languageId")]
-    language_id: String,
-    #[serde(rename = "runtimeId")]
-    runtime_id: String,
-    #[serde(rename = "packageManagerId", skip_serializing_if = "Option::is_none")]
-    package_manager_id: Option<String>,
-    #[serde(rename = "lockfileId", skip_serializing_if = "Option::is_none")]
-    lockfile_id: Option<String>,
+struct SkillsDocument {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    skills: Vec<Skill>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Skill {
+    id: String,
+    scope: String,
+    declarative: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryEntry {
+    title: String,
+    content: String,
+    category: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoriesDocument {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    memories: Vec<MemoryEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,269 +76,219 @@ struct Diagnostic {
     path: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct CheckReport {
+    valid: bool,
+    compliant: bool,
+    policy_configured: bool,
+    diagnostics: Vec<Diagnostic>,
+    violations: Vec<PolicyViolation>,
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
-    match Cli::parse().command {
-        Commands::Init { path, force } => init(&path, force),
-        Commands::Check { path, json } => check(&path, json),
-        Commands::Sync { payload } => sync(&payload).await,
+async fn main() {
+    let result = match cli::Cli::parse().command {
+        cli::Commands::Init(args) => init(&args.path, args.force),
+        cli::Commands::Check(args) => {
+            check_with_registry(&args.path, args.json, args.registry.as_deref())
+        }
+        cli::Commands::Sync(args) => sync(&args.payload).await,
+        cli::Commands::Memory(args) => match args.command {
+            cli::MemoryCommands::Add(args) => memory_add(
+                &args.path,
+                &args.title,
+                &args.content,
+                &args.category,
+                args.force,
+                args.json,
+            ),
+        },
+    };
+    if let Err(error) = result {
+        let error = error::AppError::from(error);
+        eprintln!("{error}");
+        std::process::exit(1);
     }
-}
-
-const MANIFESTS: [(&str, &str, &str); 6] = [
-    ("package.json", "package-manifest", "javascript"),
-    ("pnpm-workspace.yaml", "workspace-manifest", "typescript"),
-    ("Cargo.toml", "cargo-manifest", "rust"),
-    ("composer.json", "composer-manifest", "php"),
-    ("astro.config.ts", "astro-config", "typescript"),
-    ("docusaurus.config.ts", "docusaurus-config", "typescript"),
-];
-
-fn lockfile_for(path: &Path, language_id: &str) -> Option<String> {
-    let names = [
-        ("pnpm-lock.yaml", "pnpm"),
-        ("package-lock.json", "npm"),
-        ("yarn.lock", "yarn"),
-        ("Cargo.lock", "cargo"),
-        ("composer.lock", "composer"),
-    ];
-    names
-        .iter()
-        .find(|(name, _)| path.join(name).is_file())
-        .map(|(_, _)| format!("lockfile-{language_id}"))
-}
-
-fn package_manager_for(path: &Path, language_id: &str) -> Option<String> {
-    if path.join("pnpm-lock.yaml").is_file()
-        || path.join("package-lock.json").is_file()
-        || path.join("yarn.lock").is_file()
-        || path.join("Cargo.lock").is_file()
-        || path.join("composer.lock").is_file()
-    {
-        Some(format!("package-manager-{language_id}"))
-    } else {
-        None
-    }
-}
-
-fn manifest_evidence(path: &Path) -> Vec<ManifestEvidence> {
-    MANIFESTS
-        .iter()
-        .filter_map(|(name, kind, language_id)| {
-            if !path.join(name).is_file() {
-                return None;
-            }
-            Some(ManifestEvidence {
-                path: (*name).to_owned(),
-                kind: (*kind).to_owned(),
-                language_id: (*language_id).to_owned(),
-                runtime_id: format!("runtime-{language_id}"),
-                package_manager_id: package_manager_for(path, language_id),
-                lockfile_id: lockfile_for(path, language_id),
-            })
-        })
-        .collect()
 }
 
 fn init(path: &Path, force: bool) -> Result<()> {
-    let config_path = path.join(".agent/config.json");
-    if config_path.exists() && !force {
-        bail!(".agent/config.json already exists; pass --force after reviewing it");
+    let result = scan(path)?;
+    if result.manifests.is_empty() {
+        bail!("no supported primary manifest or supplementary stack evidence found");
     }
-    let evidence = manifest_evidence(path);
     let mut runtime_owners = BTreeMap::new();
-    for item in &evidence {
+    let mut invariant_ids = BTreeSet::new();
+    for item in &result.manifests {
         runtime_owners.insert(item.runtime_id.clone(), "workspace".to_owned());
+        if !item.kind.ends_with("-config") && item.kind != "workspace-manifest" {
+            invariant_ids.insert(format!("invariant-{}", item.language_id));
+        }
     }
-    let invariant_ids = evidence
-        .iter()
-        .map(|item| format!("invariant-{}", item.language_id))
-        .collect::<Vec<_>>();
     let config = AgentConfig {
         schema_version: "1.0".to_owned(),
-        project: path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("project")
-            .to_owned(),
+        project: project_name(path),
         mode: "declarative".to_owned(),
         runtime_owners,
         safe_commands: vec!["sibyl check --json".to_owned()],
-        manifest_evidence: evidence,
-        invariant_ids,
+        manifest_evidence: result.manifests,
+        invariant_ids: invariant_ids.into_iter().collect(),
         remote_mutation_requires_explicit_command: true,
         remote_evidence_is_separate: true,
     };
-    fs::create_dir_all(config_path.parent().context("resolve .agent directory")?)?;
-    fs::write(
-        &config_path,
-        format!("{}\n", serde_json::to_string_pretty(&config)?),
-    )
-    .context("write agent config")?;
-    println!("created {}", config_path.display());
+    let skills = SkillsDocument {
+        schema_version: "1.0".to_owned(),
+        skills: config
+            .runtime_owners
+            .keys()
+            .map(|runtime| Skill {
+                id: runtime.trim_start_matches("runtime-").to_owned(),
+                scope: "workspace".to_owned(),
+                declarative: true,
+            })
+            .collect(),
+    };
+    let memories = MemoriesDocument {
+        schema_version: "1.0".to_owned(),
+        memories: Vec::new(),
+    };
+    let files = vec![
+        ("config.json", json_bytes(&config)?),
+        ("skills.json", json_bytes(&skills)?),
+        ("memories.json", json_bytes(&memories)?),
+        ("rules.md", FIXED_RULES.as_bytes().to_vec()),
+        ("context.ignore", FIXED_CONTEXT_IGNORE.as_bytes().to_vec()),
+    ];
+    write_governance(path, &files, force)?;
+    for (name, _) in files {
+        println!("created .agent/{name}");
+    }
     Ok(())
 }
 
-fn check(path: &Path, json: bool) -> Result<()> {
+fn check_with_registry(path: &Path, json: bool, registry: Option<&Path>) -> Result<()> {
     let mut diagnostics = Vec::new();
+    let result = scan(path)?;
     let config_path = path.join(".agent/config.json");
-    let config = match fs::read_to_string(&config_path).and_then(|contents| {
-        serde_json::from_str::<AgentConfig>(&contents).map_err(std::io::Error::other)
-    }) {
-        Ok(config) => config,
-        Err(_) => {
+    let config = match read_json::<AgentConfig>(&config_path) {
+        Ok(config) => Some(config),
+        Err(error) => {
             diagnostics.push(Diagnostic {
                 code: "config_missing_or_invalid",
                 message: "a schema-valid .agent/config.json is required".to_owned(),
                 path: Some(".agent/config.json".to_owned()),
             });
-            AgentConfig {
-                schema_version: String::new(),
-                project: String::new(),
-                mode: String::new(),
-                runtime_owners: BTreeMap::new(),
-                safe_commands: Vec::new(),
-                manifest_evidence: Vec::new(),
-                invariant_ids: Vec::new(),
-                remote_mutation_requires_explicit_command: false,
-                remote_evidence_is_separate: false,
-            }
+            let _ = error;
+            None
         }
     };
-    if config.schema_version != "1.0" {
-        diagnostics.push(Diagnostic {
-            code: "unsupported_schema",
-            message: "agent config schemaVersion must be 1.0".to_owned(),
-            path: Some("schemaVersion".to_owned()),
-        });
+    if let Some(config) = &config {
+        if config.schema_version != "1.0" {
+            diagnostics.push(Diagnostic {
+                code: "unsupported_schema",
+                message: "agent config schemaVersion must be 1.0".to_owned(),
+                path: Some("schemaVersion".to_owned()),
+            });
+        }
+        if config.mode != "declarative"
+            || !config.remote_mutation_requires_explicit_command
+            || !config.remote_evidence_is_separate
+        {
+            diagnostics.push(Diagnostic {
+                code: "unsafe_controls",
+                message: "agent config must remain declarative and keep remote evidence separate"
+                    .to_owned(),
+                path: None,
+            });
+        }
+        for evidence in &config.manifest_evidence {
+            if !result.manifests.iter().any(|item| item == evidence) {
+                diagnostics.push(Diagnostic {
+                    code: "manifest_evidence_stale",
+                    message: "declared manifest evidence differs from the current local scan"
+                        .to_owned(),
+                    path: Some(evidence.path.clone()),
+                });
+            }
+        }
     }
-    if config.mode != "declarative"
-        || !config.remote_mutation_requires_explicit_command
-        || !config.remote_evidence_is_separate
-    {
+    if result.manifests.is_empty() {
         diagnostics.push(Diagnostic {
-            code: "unsafe_controls",
-            message: "agent config must remain declarative and keep remote evidence separate"
+            code: "no_manifest_evidence",
+            message: "no supported primary manifest or supplementary stack evidence was found"
                 .to_owned(),
             path: None,
         });
     }
-    if config.manifest_evidence.is_empty() {
+    validate_optional_documents(path, &mut diagnostics);
+
+    let primary = result
+        .manifests
+        .iter()
+        .filter(|item| is_primary_kind(&item.kind))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut all_dependencies = BTreeMap::new();
+    let mut per_manifest = Vec::new();
+    for manifest in &primary {
+        match extract_dependencies(path, std::slice::from_ref(manifest)) {
+            Ok(dependencies) => {
+                all_dependencies.extend(dependencies.clone());
+                per_manifest.push((manifest, dependencies));
+            }
+            Err(error) => diagnostics.push(Diagnostic {
+                code: "manifest_or_lockfile_invalid",
+                message: error.to_string(),
+                path: Some(manifest.path.clone()),
+            }),
+        }
+    }
+
+    let policy = match registry {
+        Some(source) => {
+            Some(PolicyIndex::load(source).with_context(|| "load local registry policy")?)
+        }
+        None => None,
+    };
+    let mut violations = Vec::new();
+    if policy.is_none() && !all_dependencies.is_empty() {
         diagnostics.push(Diagnostic {
-            code: "no_manifest_evidence",
-            message: "no supported manifest evidence was declared".to_owned(),
-            path: Some("manifestEvidence".to_owned()),
+            code: "package_policy_not_configured",
+            message: "package policy is not configured; provide a local registry snapshot"
+                .to_owned(),
+            path: None,
         });
     }
-    let snapshot: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../packages/schemas/fixtures/valid-ecosystem.json"
-    )))
-    .context("parse bundled ecosystem contract")?;
-    for evidence in &config.manifest_evidence {
-        let manifest_path = path.join(&evidence.path);
-        if !manifest_path.is_file() {
-            diagnostics.push(Diagnostic {
-                code: "manifest_missing",
-                message: "declared manifest evidence path does not exist".to_owned(),
-                path: Some(evidence.path.clone()),
-            });
-            continue;
+    if let Some(policy) = &policy {
+        for (manifest, dependencies) in per_manifest {
+            violations.extend(policy.evaluate(
+                &manifest.language_id,
+                &manifest.runtime_id,
+                &dependencies,
+            ));
         }
-        if let Err(error) = parse_manifest(&manifest_path) {
+        violations.sort_by(|left, right| {
+            left.package
+                .cmp(&right.package)
+                .then(left.reason.cmp(&right.reason))
+        });
+        violations.dedup();
+        for violation in &violations {
             diagnostics.push(Diagnostic {
-                code: "manifest_invalid",
-                message: error.to_string(),
-                path: Some(evidence.path.clone()),
-            });
-        }
-        let Some(language) = find(&snapshot, "languages", &evidence.language_id) else {
-            diagnostics.push(Diagnostic {
-                code: "unknown_language",
-                message: "manifest language is not in the registry".to_owned(),
-                path: Some(evidence.language_id.clone()),
-            });
-            continue;
-        };
-        if language
-            .get("runtimeId")
-            .and_then(serde_json::Value::as_str)
-            != Some(evidence.runtime_id.as_str())
-        {
-            diagnostics.push(Diagnostic {
-                code: "runtime_mismatch",
-                message: "manifest runtime evidence does not match the registry".to_owned(),
-                path: Some(evidence.path.clone()),
-            });
-        }
-        let invariant_id = format!("invariant-{}", evidence.language_id);
-        if !config.invariant_ids.contains(&invariant_id) {
-            diagnostics.push(Diagnostic {
-                code: "invariant_not_selected",
-                message: "manifest language has no selected invariant".to_owned(),
-                path: Some(invariant_id),
-            });
-            continue;
-        }
-        let Some(invariant) = find(&snapshot, "invariants", &invariant_id) else {
-            diagnostics.push(Diagnostic {
-                code: "unknown_invariant",
-                message: "selected invariant is not in the registry".to_owned(),
-                path: Some(invariant_id),
-            });
-            continue;
-        };
-        let fields = invariant
-            .get("evidenceFields")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if fields.contains(&"lockfileId")
-            && evidence.lockfile_id.as_deref()
-                != Some(format!("lockfile-{}", evidence.language_id).as_str())
-        {
-            diagnostics.push(Diagnostic {
-                code: "lockfile_missing",
-                message: "the selected invariant requires lockfile evidence".to_owned(),
-                path: Some(evidence.path.clone()),
-            });
-        }
-        if fields.contains(&"packageManagerId")
-            && evidence.package_manager_id.as_deref()
-                != Some(format!("package-manager-{}", evidence.language_id).as_str())
-        {
-            diagnostics.push(Diagnostic {
-                code: "package_manager_missing",
-                message: "the selected invariant requires package-manager evidence".to_owned(),
-                path: Some(evidence.path.clone()),
-            });
-        }
-        if fields.contains(&"manifestPaths") && evidence.path.trim().is_empty() {
-            diagnostics.push(Diagnostic {
-                code: "manifest_missing",
-                message: "the selected invariant requires manifest evidence".to_owned(),
-                path: Some(evidence.path.clone()),
+                code: "package_policy_violation",
+                message: format!("{}: {}", violation.package, violation.reason),
+                path: Some(violation.package.clone()),
             });
         }
     }
     let valid = diagnostics.is_empty();
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({"valid": valid, "compliant": valid, "diagnostics": diagnostics})
-        );
-    } else if valid {
-        println!("compliant: {} manifest(s)", config.manifest_evidence.len());
-    } else {
-        for diagnostic in &diagnostics {
-            eprintln!("{}: {}", diagnostic.code, diagnostic.message);
-        }
-    }
+    let report = CheckReport {
+        valid,
+        compliant: valid,
+        policy_configured: policy.is_some(),
+        diagnostics,
+        violations,
+    };
+    ui::print_check(&report, json)?;
     if valid {
         Ok(())
     } else {
@@ -351,28 +296,204 @@ fn check(path: &Path, json: bool) -> Result<()> {
     }
 }
 
-fn find<'a>(
-    snapshot: &'a serde_json::Value,
-    collection: &str,
-    id: &str,
-) -> Option<&'a serde_json::Value> {
-    snapshot
-        .get(collection)?
-        .as_array()?
-        .iter()
-        .find(|item| item.get("id").and_then(serde_json::Value::as_str) == Some(id))
+fn validate_optional_documents(path: &Path, diagnostics: &mut Vec<Diagnostic>) {
+    for (name, expected) in [("skills.json", "skills"), ("memories.json", "memories")] {
+        let document_path = path.join(".agent").join(name);
+        if !document_path.exists() {
+            continue;
+        }
+        let value = match read_json_value(&document_path) {
+            Ok(value) => value,
+            Err(_) => {
+                diagnostics.push(Diagnostic {
+                    code: "governance_document_invalid",
+                    message: format!(".agent/{name} is not valid JSON"),
+                    path: Some(format!(".agent/{name}")),
+                });
+                continue;
+            }
+        };
+        if (expected == "memories"
+            && serde_json::from_value::<MemoriesDocument>(value.clone()).is_err())
+            || (expected == "skills" && serde_json::from_value::<SkillsDocument>(value).is_err())
+        {
+            diagnostics.push(Diagnostic {
+                code: "governance_document_invalid",
+                message: format!(".agent/{name} has an unsupported or malformed schema"),
+                path: Some(format!(".agent/{name}")),
+            });
+        }
+    }
+    let invariant_path = path.join(".agent/invariants.json");
+    if invariant_path.is_file() {
+        match read_json_value(&invariant_path) {
+            Ok(value) => {
+                if contains_unsafe_material(&value) {
+                    diagnostics.push(Diagnostic {
+                        code: "unsafe_governance_document",
+                        message:
+                            "invariant metadata contains prohibited secret or execution material"
+                                .to_owned(),
+                        path: Some(".agent/invariants.json".to_owned()),
+                    });
+                }
+            }
+            Err(_) => diagnostics.push(Diagnostic {
+                code: "governance_document_invalid",
+                message: ".agent/invariants.json is not valid JSON".to_owned(),
+                path: Some(".agent/invariants.json".to_owned()),
+            }),
+        }
+    }
 }
 
-fn parse_manifest(path: &Path) -> Result<()> {
-    let contents = fs::read_to_string(path).context("read manifest")?;
-    if contents.trim().is_empty() {
-        bail!("manifest is empty");
+fn memory_add(
+    path: &Path,
+    title: &str,
+    content: &str,
+    category: &str,
+    force: bool,
+    json: bool,
+) -> Result<()> {
+    let entry = MemoryEntry {
+        title: title.trim().to_owned(),
+        content: content.trim().to_owned(),
+        category: category.trim().to_owned(),
+    };
+    if entry.title.is_empty() || entry.content.is_empty() || entry.category.is_empty() {
+        bail!("memory title, content, and category must be nonempty");
     }
-    if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
-        let _: serde_json::Value =
-            serde_json::from_str(&contents).context("manifest JSON is invalid")?;
+    let candidate = serde_json::json!({"schemaVersion":"1.0","memories":[entry]});
+    if contains_unsafe_material(&candidate) {
+        bail!("memory contains prohibited secret or execution material");
+    }
+    let memory_path = path.join(".agent/memories.json");
+    let mut document = if memory_path.exists() {
+        read_json::<MemoriesDocument>(&memory_path).context("read .agent/memories.json")?
+    } else {
+        MemoriesDocument {
+            schema_version: "1.0".to_owned(),
+            memories: Vec::new(),
+        }
+    };
+    if document.schema_version != "1.0" {
+        bail!(".agent/memories.json schemaVersion must be 1.0");
+    }
+    document.memories.push(entry);
+    let bytes = json_bytes(&document)?;
+    let _ = force;
+    atomic_write(&memory_path, &bytes)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"path":".agent/memories.json","count":document.memories.len()})
+        );
+    } else {
+        println!(
+            "appended .agent/memories.json ({} entr{})",
+            document.memories.len(),
+            if document.memories.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        );
     }
     Ok(())
+}
+
+fn write_governance(path: &Path, files: &[(&str, Vec<u8>)], force: bool) -> Result<()> {
+    let agent_dir = path.join(".agent");
+    let conflicts = files
+        .iter()
+        .filter(|(name, _)| agent_dir.join(name).exists())
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    if !conflicts.is_empty() && !force {
+        bail!(
+            "governance files already exist: {}; pass --force after reviewing them",
+            conflicts.join(", ")
+        );
+    }
+    fs::create_dir_all(&agent_dir).context("create .agent directory")?;
+    let mut temporary = Vec::new();
+    for (name, contents) in files {
+        let temporary_path = agent_dir.join(format!(".{name}.sibyl-tmp-{}", std::process::id()));
+        if let Err(error) = fs::write(&temporary_path, contents) {
+            for path in &temporary {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error).with_context(|| format!("write temporary .agent/{name}"));
+        }
+        temporary.push(temporary_path);
+    }
+    for ((name, _), temporary_path) in files.iter().zip(&temporary) {
+        if let Err(error) = fs::rename(temporary_path, agent_dir.join(name)) {
+            for path in &temporary {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error).with_context(|| format!("replace .agent/{name}"));
+        }
+    }
+    Ok(())
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    fs::create_dir_all(path.parent().context("resolve destination directory")?)?;
+    let temporary_path = path.with_file_name(format!(
+        ".{}.sibyl-tmp-{}",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("document"),
+        std::process::id()
+    ));
+    fs::write(&temporary_path, contents).context("write temporary document")?;
+    fs::rename(&temporary_path, path).context("replace document")?;
+    Ok(())
+}
+
+fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let value = read_json_value(path)?;
+    serde_json::from_value(value).context("JSON document has unsupported fields or types")
+}
+
+fn read_json_value(path: &Path) -> Result<Value> {
+    let contents = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&contents).with_context(|| format!("parse {}", path.display()))
+}
+
+fn contains_unsafe_material(value: &Value) -> bool {
+    fn visit(value: &Value) -> bool {
+        match value {
+            Value::Object(object) => object.iter().any(|(key, value)| {
+                let key = key.to_ascii_lowercase();
+                key.contains("password")
+                    || key == "token"
+                    || key.contains("secret")
+                    || key.contains("private_key")
+                    || key == "command"
+                    || key == "exec"
+                    || key == "script"
+                    || visit(value)
+            }),
+            Value::Array(items) => items.iter().any(visit),
+            Value::String(text) => {
+                let lower = text.to_ascii_lowercase();
+                lower.contains("-----begin ")
+                    || ["token:", "password:", "secret:", "api_key:", "private key:"]
+                        .iter()
+                        .any(|needle| lower.contains(needle))
+            }
+            _ => false,
+        }
+    }
+    visit(value)
 }
 
 async fn sync(payload: &Path) -> Result<()> {
@@ -380,17 +501,23 @@ async fn sync(payload: &Path) -> Result<()> {
         std::env::var("SIBYL_SYNC_ENDPOINT").context("SIBYL_SYNC_ENDPOINT is required")?;
     let token =
         std::env::var("SIBYL_SYNC_AUTH_TOKEN").context("SIBYL_SYNC_AUTH_TOKEN is required")?;
-    if token.is_empty() || !endpoint.starts_with("https://") {
+    let url = reqwest::Url::parse(&endpoint).context("sync endpoint is invalid")?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || token.trim().is_empty()
+    {
         bail!("sync endpoint and authorization are invalid");
     }
     let body = fs::read_to_string(payload).context("read sync payload")?;
     validate_sync_payload(&body)?;
+    let spinner = ui::sync_spinner();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
     for attempt in 0..3 {
         let response = match client
-            .post(&endpoint)
+            .post(url.clone())
             .bearer_auth(&token)
             .body(body.clone())
             .send()
@@ -398,96 +525,102 @@ async fn sync(payload: &Path) -> Result<()> {
         {
             Ok(response) => response,
             Err(_) if attempt < 2 => continue,
-            Err(_) => bail!("remote synchronization transport failed after bounded retries"),
+            Err(_) => {
+                spinner.finish_and_clear();
+                bail!("remote synchronization transport failed after bounded retries");
+            }
         };
         if !response.status().is_success() {
+            spinner.finish_and_clear();
             bail!(
                 "remote synchronization failed with status {}",
                 response.status()
             );
         }
+        spinner.finish_and_clear();
         println!("remote acknowledgement received");
         return Ok(());
     }
+    spinner.finish_and_clear();
     bail!("remote synchronization did not complete")
 }
 
 fn validate_sync_payload(body: &str) -> Result<()> {
-    let value: serde_json::Value =
-        serde_json::from_str(body).context("sync payload is not JSON")?;
-    if value
-        .get("schemaVersion")
-        .and_then(serde_json::Value::as_str)
-        != Some("1.0")
-    {
+    let value: Value = serde_json::from_str(body).context("sync payload is not JSON")?;
+    if value.get("schemaVersion").and_then(Value::as_str) != Some("1.0") {
         bail!("sync payload schema version is unsupported");
     }
     let kind = value
         .get("kind")
-        .and_then(serde_json::Value::as_str)
+        .and_then(Value::as_str)
         .context("sync payload kind is required")?;
     if !matches!(kind, "episodic-memory" | "ast-skeleton") {
         bail!("sync payload kind is unsupported");
     }
-    let serialized = body.to_ascii_lowercase();
-    if serialized.contains("private key")
-        || serialized.contains("\"token\"")
-        || serialized.contains("\"password\"")
-        || serialized.contains("\"secret\"")
-    {
-        bail!("sync payload contains prohibited secret material");
+    if contains_unsafe_material(&value) {
+        bail!("sync payload contains prohibited secret or execution material");
     }
     Ok(())
 }
 
+fn is_primary_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "package-manifest"
+            | "cargo-manifest"
+            | "python-manifest"
+            | "go-manifest"
+            | "composer-manifest"
+    )
+}
+
+fn project_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("project")
+        .to_owned()
+}
+
+const FIXED_RULES: &str = "# SibylHub agent rules\n\n- Keep project governance declarative.\n- Use sibyl check for local validation.\n- Use sibyl sync only when explicitly authorized.\n";
+const FIXED_CONTEXT_IGNORE: &str =
+    "# Generated and dependency trees\nnode_modules/\ntarget/\nvendor/\n.git/\n";
+
 #[cfg(test)]
 mod tests {
-    use super::{check, init, manifest_evidence, validate_sync_payload};
+    use super::{check_with_registry, init, memory_add};
     use std::fs;
+
     #[test]
-    fn sync_payload_requires_supported_contract() {
-        assert!(validate_sync_payload(
-            r#"{"schemaVersion":"1.0","kind":"ast-skeleton","entries":[]}"#
-        )
-        .is_ok());
-        assert!(validate_sync_payload(r#"{"schemaVersion":"2.0","kind":"ast-skeleton"}"#).is_err());
-        assert!(validate_sync_payload(
-            r#"{"schemaVersion":"1.0","kind":"ast-skeleton","token":"redacted"}"#
-        )
-        .is_err());
-    }
-    #[test]
-    fn manifest_evidence_is_derived_without_executing_manifests() {
-        let evidence = manifest_evidence(std::path::Path::new("."));
-        assert!(evidence
-            .iter()
-            .all(|item| item.runtime_id.starts_with("runtime-")));
+    fn init_creates_all_governance_documents_and_check_reads_them() {
+        let root = tempfile::tempdir().expect("temp project");
+        fs::write(root.path().join("package.json"), r#"{"name":"fixture"}"#).expect("package");
+        init(root.path(), false).expect("init");
+        for name in [
+            "config.json",
+            "rules.md",
+            "skills.json",
+            "memories.json",
+            "context.ignore",
+        ] {
+            assert!(
+                root.path().join(".agent").join(name).is_file(),
+                "missing {name}"
+            );
+        }
+        check_with_registry(root.path(), true, None).expect("check");
     }
 
     #[test]
-    fn init_and_check_use_local_manifest_evidence_only() {
-        let root = std::env::temp_dir().join(format!("sibyl-cli-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("temporary project");
-        fs::write(root.join("package.json"), r#"{"name":"fixture"}"#).expect("package manifest");
-        fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").expect("lockfile");
-        init(&root, false).expect("initialization");
-        assert!(check(&root, true).is_ok());
-        assert!(init(&root, false).is_err());
-        init(&root, true).expect("forced initialization");
-        fs::remove_dir_all(&root).expect("cleanup");
-    }
-
-    #[test]
-    fn check_reports_malformed_and_unsupported_governance_metadata() {
-        let root = std::env::temp_dir().join(format!("sibyl-cli-invalid-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join(".agent")).expect("temporary project");
-        fs::write(root.join(".agent/config.json"), "{\"unexpected\":true}")
-            .expect("malformed config");
-        assert!(check(&root, true).is_err());
-        fs::write(root.join(".agent/config.json"), r#"{"schemaVersion":"9.9","project":"fixture","mode":"declarative","runtimeOwners":{},"safeCommands":["sibyl check --json"],"manifestEvidence":[],"invariantIds":[],"remoteMutationRequiresExplicitCommand":true,"remoteEvidenceIsSeparate":true}"#).expect("unsupported config");
-        assert!(check(&root, true).is_err());
-        fs::remove_dir_all(&root).expect("cleanup");
+    fn memory_add_preserves_order() {
+        let root = tempfile::tempdir().expect("temp project");
+        memory_add(root.path(), "first", "content", "invariant", false, true).expect("first");
+        memory_add(root.path(), "second", "content", "gotcha", false, true).expect("second");
+        let document =
+            fs::read_to_string(root.path().join(".agent/memories.json")).expect("memory document");
+        assert!(
+            document.find("first").expect("first entry")
+                < document.find("second").expect("second entry")
+        );
     }
 }
