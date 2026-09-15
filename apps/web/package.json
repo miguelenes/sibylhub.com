@@ -17,7 +17,7 @@
     "clean": "rm -rf dist .astro .wrangler coverage"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "12.6.13",
+    "@astrojs/cloudflare": "13.1.10",
     "@astrojs/react": "4.3.1",
     "@heroui/react": "3.2.5",
     "@heroui/styles": "3.2.5",
