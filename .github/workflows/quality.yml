@@ -16,6 +16,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+          tools: composer
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
@@ -24,6 +29,15 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install backoffice PHP dependencies
+        working-directory: apps/backoffice
+        run: |
+          cp -n .env.example .env
+          mkdir -p database
+          touch database/database.sqlite
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          php artisan key:generate --ansi
+          php artisan migrate --force --ansi
       - run: pnpm check:config
       - run: pnpm lint
       - run: pnpm typecheck
