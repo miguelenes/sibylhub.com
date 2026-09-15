@@ -1,0 +1,42 @@
+{
+  "$schema": "https://www.schemastore.org/package.json",
+  "name": "@sibylhub/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm build:js && pnpm build:types",
+    "build:js": "tsup",
+    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
+    "lint": "tsc --noEmit --project tsconfig.json",
+    "format": "prettier --check src *.json *.ts",
+    "format:write": "prettier --write src *.json *.ts",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@sibylhub/schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@sibylhub/typescript-config": "workspace:*",
+    "@types/node": "24.8.1",
+    "@vitest/coverage-v8": "3.2.4",
+    "prettier": "3.9.6",
+    "tsup": "8.3.5",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -10,7 +10,9 @@
       "name": "python",
       "version": "managed"
     },
-    "extensions": [".python"]
+    "extensions": [
+      ".python"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-python",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "python build",
-      "languageIds": ["python"]
+      "languageIds": [
+        "python"
+      ]
     }
   ],
   "invariants": [

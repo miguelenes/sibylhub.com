@@ -4,7 +4,7 @@
     ".astro/types.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
-    "astro.config.ts",
+    "astro.config.mjs",
     "env.d.ts"
   ],
   "exclude": ["dist"]

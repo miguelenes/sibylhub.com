@@ -10,7 +10,9 @@
       "name": "swift",
       "version": "managed"
     },
-    "extensions": [".swift"]
+    "extensions": [
+      ".swift"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-swift",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "swift build",
-      "languageIds": ["swift"]
+      "languageIds": [
+        "swift"
+      ]
     }
   ],
   "invariants": [

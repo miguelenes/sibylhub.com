@@ -10,7 +10,9 @@
       "name": "objective-c",
       "version": "managed"
     },
-    "extensions": [".objective-c"]
+    "extensions": [
+      ".objective-c"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-objective-c",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "objective-c build",
-      "languageIds": ["objective-c"]
+      "languageIds": [
+        "objective-c"
+      ]
     }
   ],
   "invariants": [

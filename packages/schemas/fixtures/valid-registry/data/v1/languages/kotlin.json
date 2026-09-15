@@ -10,7 +10,9 @@
       "name": "kotlin",
       "version": "managed"
     },
-    "extensions": [".kotlin"]
+    "extensions": [
+      ".kotlin"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-kotlin",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "kotlin build",
-      "languageIds": ["kotlin"]
+      "languageIds": [
+        "kotlin"
+      ]
     }
   ],
   "invariants": [

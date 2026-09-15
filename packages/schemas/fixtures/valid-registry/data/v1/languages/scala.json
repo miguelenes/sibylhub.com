@@ -10,7 +10,9 @@
       "name": "scala",
       "version": "managed"
     },
-    "extensions": [".scala"]
+    "extensions": [
+      ".scala"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-scala",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "scala build",
-      "languageIds": ["scala"]
+      "languageIds": [
+        "scala"
+      ]
     }
   ],
   "invariants": [

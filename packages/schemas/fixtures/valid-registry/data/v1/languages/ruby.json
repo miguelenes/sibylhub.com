@@ -10,7 +10,9 @@
       "name": "ruby",
       "version": "managed"
     },
-    "extensions": [".ruby"]
+    "extensions": [
+      ".ruby"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-ruby",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "ruby build",
-      "languageIds": ["ruby"]
+      "languageIds": [
+        "ruby"
+      ]
     }
   ],
   "invariants": [

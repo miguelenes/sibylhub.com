@@ -10,7 +10,9 @@
       "name": "powershell",
       "version": "managed"
     },
-    "extensions": [".powershell"]
+    "extensions": [
+      ".powershell"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-powershell",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "powershell build",
-      "languageIds": ["powershell"]
+      "languageIds": [
+        "powershell"
+      ]
     }
   ],
   "invariants": [

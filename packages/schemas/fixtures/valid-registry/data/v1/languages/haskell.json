@@ -10,7 +10,9 @@
       "name": "haskell",
       "version": "managed"
     },
-    "extensions": [".haskell"]
+    "extensions": [
+      ".haskell"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-haskell",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "haskell build",
-      "languageIds": ["haskell"]
+      "languageIds": [
+        "haskell"
+      ]
     }
   ],
   "invariants": [

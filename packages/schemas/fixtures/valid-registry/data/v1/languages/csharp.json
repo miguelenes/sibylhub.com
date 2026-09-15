@@ -10,7 +10,9 @@
       "name": "csharp",
       "version": "managed"
     },
-    "extensions": [".csharp"]
+    "extensions": [
+      ".csharp"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-csharp",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "csharp build",
-      "languageIds": ["csharp"]
+      "languageIds": [
+        "csharp"
+      ]
     }
   ],
   "invariants": [

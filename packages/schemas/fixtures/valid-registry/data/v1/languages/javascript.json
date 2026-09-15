@@ -10,7 +10,9 @@
       "name": "javascript",
       "version": "managed"
     },
-    "extensions": [".javascript"]
+    "extensions": [
+      ".javascript"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-javascript",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "javascript build",
-      "languageIds": ["javascript"]
+      "languageIds": [
+        "javascript"
+      ]
     }
   ],
   "invariants": [

@@ -21,6 +21,9 @@
     "@astrojs/react": "4.3.1",
     "@heroui/react": "3.2.5",
     "@heroui/styles": "3.2.5",
+    "@sibylhub/api-client": "workspace:*",
+    "@sibylhub/design-system": "workspace:*",
+    "@sibylhub/schemas": "workspace:*",
     "astro": "5.18.2",
     "react": "19.2.0",
     "react-dom": "19.2.0"

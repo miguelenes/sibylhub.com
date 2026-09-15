@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-09-15
+skip_specs: true
+goal: Document the monorepo, .agent governance, context compression, ecosystem
+  registry, audited tool boundaries, CLI behavior, and static publication
+  contract.

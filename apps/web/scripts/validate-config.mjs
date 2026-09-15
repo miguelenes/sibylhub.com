@@ -29,6 +29,7 @@ console.log(
   JSON.stringify({
     status: "ok",
     mode: "local-worker",
-    bindings: ["DB", "AST_STORAGE", "VECTORIZE_INDEX"],
+    bindings: ["DB", "AST_STORAGE", "VECTORIZE_INDEX", "AI"],
+    optionalBindings: ["AI"],
   }),
 );

@@ -10,7 +10,9 @@
       "name": "sql",
       "version": "managed"
     },
-    "extensions": [".sql"]
+    "extensions": [
+      ".sql"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-sql",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "sql build",
-      "languageIds": ["sql"]
+      "languageIds": [
+        "sql"
+      ]
     }
   ],
   "invariants": [

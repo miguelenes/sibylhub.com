@@ -10,7 +10,9 @@
       "name": "lua",
       "version": "managed"
     },
-    "extensions": [".lua"]
+    "extensions": [
+      ".lua"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-lua",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "lua build",
-      "languageIds": ["lua"]
+      "languageIds": [
+        "lua"
+      ]
     }
   ],
   "invariants": [

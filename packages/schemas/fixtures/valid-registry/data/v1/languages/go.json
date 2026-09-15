@@ -10,7 +10,9 @@
       "name": "go",
       "version": "managed"
     },
-    "extensions": [".go"]
+    "extensions": [
+      ".go"
+    ]
   },
   "runtimes": [
     {
@@ -92,9 +94,13 @@
         "name": "builder-go",
         "version": "managed"
       },
-      "configurationFiles": ["manifest.json"],
+      "configurationFiles": [
+        "manifest.json"
+      ],
       "runCommand": "go build",
-      "languageIds": ["go"]
+      "languageIds": [
+        "go"
+      ]
     }
   ],
   "invariants": [

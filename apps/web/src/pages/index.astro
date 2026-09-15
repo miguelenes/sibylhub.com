@@ -1,42 +1,170 @@
 ---
-import Layout from "../layouts/Layout.astro";
-import { StatusIsland } from "../components/StatusIsland";
+import { isSafeProjectId } from "@sibylhub/api-client";
+import CockpitLayout from "../layouts/CockpitLayout.astro";
+import { DependencyAuditView } from "../components/DependencyAuditView";
+import { FastMcpSkillCatalog } from "../components/FastMcpSkillCatalog";
+import { ContextObservatory } from "../components/ContextObservatory";
+import { MemoryGraphViewer } from "../components/MemoryGraphViewer";
+import { loadSkillCatalog } from "../lib/catalog-service";
+import { readRuntimeEnv } from "../lib/bindings";
+import { readProjectContext } from "../lib/context-service";
+import { getLocalProjectContext } from "../lib/fixtures";
 import "../styles/global.css";
 
-const capabilities = [
-  "Versioned ecosystem contracts",
-  "Server-rendered public routes",
-  "Local-first validation",
-];
+const runtimeEnv = readRuntimeEnv(Astro.locals);
+const requestedProjectId =
+  Astro.url.searchParams.get("project_id") ?? undefined;
+const projectSelectionIsSafe =
+  requestedProjectId === undefined || isSafeProjectId(requestedProjectId);
+const contextResult = projectSelectionIsSafe
+  ? await readProjectContext(
+      runtimeEnv,
+      requestedProjectId,
+      runtimeEnv.SIBYL_ACTIVE_PROJECT_ID,
+    )
+  : { ok: false as const, kind: "unavailable" as const };
+const localContext = getLocalProjectContext();
+const initialContext = contextResult.ok ? contextResult.data : localContext;
+const pageStatus = contextResult.ok ? contextResult.data.status : "unavailable";
+const contextMessage = contextResult.ok
+  ? contextResult.data.source === "local"
+    ? "Local deterministic snapshot"
+    : contextResult.data.status === "stale"
+      ? "Snapshot is stale"
+      : "Precomputed project snapshot"
+  : "Project context is unavailable. Showing the local shape while the source recovers.";
+const skillCatalogResult = loadSkillCatalog();
 ---
 
-<Layout title="SibylHub platform">
-  <main class="mx-auto flex min-h-screen max-w-5xl flex-col gap-12 px-6 py-20">
-    <header class="max-w-3xl space-y-6">
-      <p class="text-sm font-medium uppercase tracking-[0.3em] text-cyan-300">
-        SibylHub
-      </p>
-      <h1 class="text-5xl font-semibold tracking-tight text-white sm:text-7xl">
-        A governed home for ecosystem knowledge.
-      </h1>
-      <p class="max-w-2xl text-lg leading-8 text-slate-300">
-        The baseline route is server-rendered by Astro and leaves interactive
-        behavior to one focused React island.
-      </p>
-    </header>
-    <section
-      aria-labelledby="capabilities-heading"
-      class="grid gap-4 sm:grid-cols-3"
-    >
-      <h2 id="capabilities-heading" class="sr-only">
-        Platform capabilities
-      </h2>
-      {capabilities.map((capability) => (
-        <article class="rounded-2xl border border-violet-300/20 bg-violet-950/20 p-5 text-violet-100">
-          {capability}
-        </article>
-      ))}
+<CockpitLayout
+  title={`${initialContext.project.name} · SibylHub cockpit`}
+  projectName={initialContext.project.name}
+  projectId={initialContext.project.id}
+  projectStatus={pageStatus}
+  source={initialContext.source}
+  sourceRevision={initialContext.sourceRevision}
+>
+  <div class="space-y-8">
+    <section class="grid gap-6 border-b border-border/80 pb-8 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-end">
+      <div class="min-w-0 space-y-4">
+        <p class="font-mono text-[0.6875rem] font-semibold uppercase tracking-[0.24em] text-primary">
+          Operator cockpit / {initialContext.project.id}
+        </p>
+        <h1 class="max-w-4xl text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
+          See the context your agents can trust.
+        </h1>
+        <p class="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+          One bounded view for context budget, memory retrieval, dependency
+          policy, and declarative skills.
+        </p>
+      </div>
+      <div
+        class="rounded-lg border border-border bg-surface p-4"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <span class="font-mono text-[0.6875rem] uppercase tracking-[0.16em] text-muted-foreground">
+            Snapshot status
+          </span>
+          <span class="rounded-full border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-[0.6875rem] font-semibold uppercase text-primary">
+            {pageStatus}
+          </span>
+        </div>
+        <p class="mt-3 text-sm text-foreground">{contextMessage}</p>
+        <p class="mt-2 break-words font-mono text-xs text-muted-foreground">
+          Revision: {initialContext.sourceRevision}
+        </p>
+      </div>
     </section>
-    <StatusIsland client:visible />
-  </main>
-</Layout>
+
+    <section
+      id="observatory"
+      aria-labelledby="observatory-heading"
+      class="scroll-mt-6 space-y-4"
+    >
+      <div>
+        <p class="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-primary">
+          01 / Budget telemetry
+        </p>
+        <h2
+          id="observatory-heading"
+          class="mt-1 text-2xl font-semibold tracking-tight"
+        >
+          Context observatory
+        </h2>
+      </div>
+      <ContextObservatory
+        context={initialContext}
+        displayStatus={pageStatus}
+        client:visible
+      />
+    </section>
+
+    <section
+      id="memory"
+      aria-labelledby="memory-heading"
+      class="scroll-mt-6 space-y-4"
+    >
+      <div>
+        <p class="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-primary">
+          02 / Retrieval trace
+        </p>
+        <h2
+          id="memory-heading"
+          class="mt-1 text-2xl font-semibold tracking-tight"
+        >
+          Memory graph
+        </h2>
+      </div>
+      <MemoryGraphViewer projectId={initialContext.project.id} client:visible />
+    </section>
+
+    <section
+      id="dependencies"
+      aria-labelledby="dependencies-heading"
+      class="scroll-mt-6 space-y-4"
+    >
+      <div>
+        <p class="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-primary">
+          03 / Policy evidence
+        </p>
+        <h2
+          id="dependencies-heading"
+          class="mt-1 text-2xl font-semibold tracking-tight"
+        >
+          Dependency audit
+        </h2>
+      </div>
+      <DependencyAuditView
+        dependencies={initialContext.dependencies}
+        auditStatus={pageStatus === "unavailable" ? "unavailable" : "ready"}
+        sourceRevision={initialContext.sourceRevision}
+        client:visible
+      />
+    </section>
+
+    <section
+      id="skills"
+      aria-labelledby="skills-heading"
+      class="scroll-mt-6 space-y-4"
+    >
+      <div>
+        <p class="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-primary">
+          04 / Declarative controls
+        </p>
+        <h2
+          id="skills-heading"
+          class="mt-1 text-2xl font-semibold tracking-tight"
+        >
+          FastMCP skill catalog
+        </h2>
+      </div>
+      <FastMcpSkillCatalog
+        catalog={skillCatalogResult.catalog}
+        catalogStatus={skillCatalogResult.status}
+        client:visible
+      />
+    </section>
+  </div>
+</CockpitLayout>

@@ -3,8 +3,15 @@ main = "./dist/_worker.js/index.js"
 compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
 [vars]
 SIBYL_ENV = "local"
+
+[ai]
+binding = "AI"
 
 [[d1_databases]]
 binding = "DB"

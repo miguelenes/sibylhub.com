@@ -20,11 +20,13 @@
     "check:config": "node scripts/check-config.mjs",
     "verify:contracts": "node scripts/verify-contracts.mjs",
     "clean": "turbo run clean && rm -rf .turbo target",
-    "prepare": "node scripts/check-config.mjs"
+    "prepare": "node scripts/check-config.mjs",
+    "doctor": "npx react-doctor@latest"
   },
   "devDependencies": {
     "prettier": "3.9.6",
     "prettier-plugin-astro": "1.0.0",
+    "react-doctor": "^0.9.14",
     "turbo": "2.10.13",
     "typescript": "5.9.3"
   }
