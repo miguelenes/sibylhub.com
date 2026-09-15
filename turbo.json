@@ -9,10 +9,10 @@
     "deploy": { "cache": false },
     "registry:publish": { "cache": false },
     "migrate": { "cache": false },
-    "lint": { "dependsOn": ["^lint"] },
-    "typecheck": { "dependsOn": ["^typecheck"] },
-    "test": { "dependsOn": ["^test"] },
-    "test:cov": { "dependsOn": ["^test:cov"], "cache": false },
+    "lint": { "dependsOn": ["^build", "^lint"] },
+    "typecheck": { "dependsOn": ["^build", "^typecheck"] },
+    "test": { "dependsOn": ["^build", "^test"] },
+    "test:cov": { "dependsOn": ["^build", "^test:cov"], "cache": false },
     "format": { "cache": false },
     "clean": { "cache": false }
   }
