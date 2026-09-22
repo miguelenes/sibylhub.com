@@ -224,6 +224,179 @@ export type InvariantDocument = {
   }>;
 };
 export type ValidationIssue = { path: string; code: string; message: string };
+export const candidateSchemaVersion = "candidate-ingestion/1.0" as const;
+export type CandidateSchemaVersion = typeof candidateSchemaVersion;
+export type CandidateSourceKind =
+  | "registry"
+  | "curated"
+  | "repository"
+  | "documentation"
+  | "classifier"
+  | "firecrawl";
+export type CandidateRankBasis =
+  "global" | "source-ranked" | "seed-ranked" | "curated";
+export type CandidateSourceStatus =
+  "success" | "partial" | "failed" | "skipped" | "unsupported";
+export type CandidateConfidence = "unknown" | "low" | "medium" | "high";
+
+export type CandidateCrawl = {
+  id: string;
+  startedAt: string;
+  completedAt?: string;
+  configHash: string;
+  classifierVersions: Record<string, string>;
+};
+export type CandidateSourceCoverage = {
+  sourceId: string;
+  ecosystem: string;
+  status: CandidateSourceStatus;
+  rankBasis: CandidateRankBasis;
+  seed?: string;
+  sourceUrl?: string;
+  discovered: number;
+  deduplicated: number;
+  detailed: number;
+  normalized: number;
+  classified: number;
+  conflicted: number;
+  synchronized: number;
+  skipped: number;
+  failed: number;
+};
+export type CandidateEvidence = {
+  id: string;
+  sourceId: string;
+  sourceKind: CandidateSourceKind;
+  sourceUrl: string;
+  retrievedAt: string;
+  contentHash: string;
+  evidenceType: string;
+  locator?: string;
+  excerpt?: string;
+  rawResponse?: string;
+};
+export type CandidateDownloadObservation = {
+  sourceId: string;
+  value: number;
+  period: string;
+  sampledAt: string;
+  priorSample?: number;
+  evidenceIds: string[];
+};
+export type CandidateStarObservation = {
+  sourceId: string;
+  value: number;
+  sampledAt: string;
+  repositoryUrl?: string;
+  evidenceIds: string[];
+};
+export type CandidateDetection = {
+  kind: "framework" | "category";
+  name: string;
+  confidence: CandidateConfidence;
+  classifierVersion: string;
+  rationale: string;
+  evidenceIds: string[];
+};
+export type CandidateChoiceFactor = {
+  name: string;
+  value?: number;
+  weight: number;
+  evidenceIds: string[];
+};
+export type CandidateChoiceAssessment = {
+  score?: number;
+  status: "advisory" | "insufficient-data" | "review-required";
+  summary: string;
+  factors: CandidateChoiceFactor[];
+  evidenceIds: string[];
+};
+export type CandidateObservation = {
+  kind:
+    | "category"
+    | "alternative"
+    | "comparison"
+    | "pro"
+    | "con"
+    | "opinion"
+    | "repository"
+    | "license"
+    | "stars";
+  value: string | number;
+  sourceId: string;
+  evidenceIds: string[];
+};
+export type CandidateResolution = {
+  status: "unresolved" | "partial" | "resolved";
+  packageManagerId?: string;
+  packageCategoryId?: string;
+};
+export type CandidateRank = {
+  sourceId: string;
+  basis: CandidateRankBasis;
+  position?: number;
+  seed?: string;
+};
+export type PackageCandidate = {
+  candidateId: string;
+  ecosystem: string;
+  purl: Purl;
+  name: string;
+  namespace?: string;
+  releaseVersion?: string;
+  homepageUrl?: string;
+  repositoryUrl?: string;
+  license?: string;
+  description?: string;
+  keywords?: string[];
+  downloads?: CandidateDownloadObservation[];
+  stars?: CandidateStarObservation[];
+  evidenceIds: string[];
+  rank: CandidateRank;
+  detections: CandidateDetection[];
+  choiceAssessment?: CandidateChoiceAssessment;
+  observations?: CandidateObservation[];
+  resolution: CandidateResolution;
+};
+export type CandidateDiagnostic = {
+  severity: "info" | "warning" | "error";
+  code: string;
+  message: string;
+  candidateId?: string;
+  sourceId?: string;
+};
+export type CandidateRequestTelemetry = {
+  sourceId: string;
+  requestClass: string;
+  attempts: number;
+  status?: number;
+  durationMs: number;
+  pageOrSeed?: string;
+};
+export type CandidateTelemetry = {
+  discovered: number;
+  deduplicated: number;
+  detailed: number;
+  normalized: number;
+  classified: number;
+  conflicted: number;
+  synchronized: number;
+  skipped: number;
+  failed: number;
+  requests: CandidateRequestTelemetry[];
+};
+export type CandidateArtifact = {
+  artifactKind: "candidate-ingestion";
+  schemaVersion: CandidateSchemaVersion;
+  crawl: CandidateCrawl;
+  sourceCoverage: CandidateSourceCoverage[];
+  candidates: PackageCandidate[];
+  evidence: CandidateEvidence[];
+  diagnostics: CandidateDiagnostic[];
+  telemetry: CandidateTelemetry;
+  contentIdentity: string;
+};
+
 export type ValidationResult<T> =
-  | { valid: true; data: T; schemaVersion: SchemaVersion; issues: [] }
+  | { valid: true; data: T; schemaVersion: string; issues: [] }
   | { valid: false; schemaVersion?: string; issues: ValidationIssue[] };

@@ -1,3 +1,4 @@
 export * from "./catalog.js";
+export * from "./candidates.js";
 export * from "./types.js";
 export * from "./validators.js";

@@ -168,7 +168,7 @@ The authenticated administration panel SHALL provide workflows for programming l
 
 ### Requirement: The backoffice provides an authenticated candidate-ingestion boundary
 
-The backoffice SHALL provide a versioned `POST /api/v1/ingest/packages` boundary for explicitly enabled crawler synchronization. The boundary SHALL require a dedicated revocable ingestion token with least-privilege scope, SHALL validate the shared candidate contract before persistence, SHALL enforce request and batch limits, and SHALL keep credentials and authorization material out of logs and responses.
+The backoffice SHALL provide a versioned `POST /api/v1/ingest/packages` boundary for explicitly enabled crawler synchronization. The boundary SHALL require a dedicated revocable ingestion token with least-privilege scope, SHALL validate the envelope structure before persistence and validate each candidate against the shared candidate contract before accepting it, SHALL enforce request and batch limits, and SHALL keep credentials and authorization material out of logs and responses.
 
 #### Scenario: A valid ingestion request is authenticated
 - **WHEN** a caller submits a supported candidate batch with an active ingestion token and within configured limits

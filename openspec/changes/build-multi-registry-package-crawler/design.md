@@ -88,7 +88,7 @@ The first release will use these source strategies:
 | Go | Configured module paths queried through Go Proxy and metadata pages from pkg.go.dev | Module-seed-ranked; Go Proxy has no global top-package endpoint |
 | libs.tech | Curated category, alternative, comparison, and package pages | Curated-source order; never represented as objective global rank |
 
-Go is a supported first-release adapter selected through `--ecosystems go` and included by `crawl:all`; the fixed script surface does not add a separate `crawl:go` command because the requested scripts are limited to the five registry-specific commands and `crawl:libs-tech`.
+Go is a supported first-release adapter selected through `--ecosystems go` and included by `crawl:all`; the fixed script surface does not add a separate `crawl:go` command because the requested scripts are limited to the four registry-specific commands and `crawl:libs-tech`.
 
 The configured seeds and ranking basis are versioned in source, included in the crawl manifest, and emitted in the artifact. A future ranking provider can be added without changing the candidate identity contract.
 
@@ -168,7 +168,7 @@ The command supports:
 - `--sync` only when API configuration is present;
 - a machine-readable output mode for CI and a progress/statistics mode for TTY sessions.
 
-Interactive progress is disabled for non-TTY or CI output. The final summary always contains stable counts and source statuses. A valid artifact with partial source failures is distinguishable from a fully successful run; strict mode can make partial failures non-zero without discarding the valid artifact.
+Interactive progress is disabled for non-TTY or CI output. The final summary always contains stable counts and source statuses. A valid artifact with partial source failures is distinguishable from a fully successful run; partial failures are non-zero only in strict mode, while a supported crawl that cannot produce a valid artifact is always non-zero.
 
 ### 10. Validate locally without provider dependency
 

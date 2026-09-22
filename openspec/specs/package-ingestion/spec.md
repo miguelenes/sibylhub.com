@@ -116,7 +116,7 @@ The crawler SHALL calculate an explainable advisory choice assessment from avail
 
 ### Requirement: CLI output is useful interactively and in automation
 
-The crawler SHALL show bounded progress and framework statistics in an interactive TTY, SHALL avoid control sequences in non-TTY or CI output, SHALL provide machine-readable run summaries, and SHALL exit non-zero when a requested supported crawl cannot produce a valid artifact. Partial source failures SHALL remain visible in the summary even when the overall artifact is valid.
+The crawler SHALL show bounded progress and framework statistics in an interactive TTY, SHALL avoid control sequences in non-TTY or CI output, SHALL provide machine-readable run summaries, and SHALL exit non-zero when a requested supported crawl cannot produce a valid artifact. Partial source failures SHALL remain visible in the summary even when the overall artifact is valid, and SHALL cause a non-zero exit only when strict mode is enabled.
 
 #### Scenario: The crawler runs in CI
 - **WHEN** the command runs with a non-TTY stdout or CI environment
@@ -124,7 +124,7 @@ The crawler SHALL show bounded progress and framework statistics in an interacti
 
 #### Scenario: A crawl completes with partial failures
 - **WHEN** some package details fail but a valid artifact is produced
-- **THEN** the summary includes the failures and partial status, and the exit behavior follows the configured strictness policy rather than hiding them
+- **THEN** the summary includes the failures and partial status, and the command exits successfully by default or non-zero in strict mode without hiding them
 
 ### Requirement: Remote synchronization is opt-in and idempotent
 

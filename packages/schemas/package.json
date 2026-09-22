@@ -22,6 +22,11 @@
       "types": "./dist/catalog.d.ts",
       "import": "./dist/catalog.js"
     },
+    "./candidates": {
+      "types": "./dist/candidates.d.ts",
+      "import": "./dist/candidates.js"
+    },
+    "./fixtures/*": "./fixtures/*",
     "./schema/*": "./json-schema/*"
   },
   "files": [
@@ -31,6 +36,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "verify:package": "pnpm build && node scripts/verify-packaged-consumer.mjs",
     "lint": "eslint src scripts --max-warnings=0",
     "format": "prettier --check src scripts",
     "format:write": "prettier --write src scripts",

@@ -1,6 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  candidateIngestionSchema,
+  unsupportedCandidateArtifact,
+  unsafeCandidateArtifact,
+  validCandidateArtifact,
+} from "./candidate-schema.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const languages = [
@@ -388,6 +394,10 @@ await writeFile(
   `${JSON.stringify(invariants, null, 2)}\n`,
 );
 await writeFile(
+  resolve(root, "json-schema/candidate-ingestion-1.0.json"),
+  `${JSON.stringify(candidateIngestionSchema, null, 2)}\n`,
+);
+await writeFile(
   resolve(root, "fixtures/valid-ecosystem.json"),
   `${JSON.stringify(validEcosystem, null, 2)}\n`,
 );
@@ -430,6 +440,18 @@ await writeFile(
 await writeFile(
   resolve(root, "fixtures/malformed-ecosystem.json"),
   '{"schemaVersion":"1.0","languages":[\n',
+);
+await writeFile(
+  resolve(root, "fixtures/valid-candidate-ingestion.json"),
+  `${JSON.stringify(validCandidateArtifact, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/unsafe-candidate-ingestion.json"),
+  `${JSON.stringify(unsafeCandidateArtifact, null, 2)}\n`,
+);
+await writeFile(
+  resolve(root, "fixtures/unsupported-candidate-ingestion.json"),
+  `${JSON.stringify(unsupportedCandidateArtifact, null, 2)}\n`,
 );
 
 // The current contract is a revision-scoped split tree. Keep the legacy

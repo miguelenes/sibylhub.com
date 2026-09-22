@@ -1,0 +1,435 @@
+const id = { type: "string", minLength: 1, maxLength: 256 };
+const timestamp = { type: "string", format: "date-time" };
+const sha256 = { type: "string", pattern: "^sha256:[0-9a-f]{64}$" };
+const url = { type: "string", format: "uri" };
+const counts = { type: "integer", minimum: 0 };
+const evidenceRefs = { type: "array", items: id };
+const purl = {
+  type: "object",
+  required: ["type", "name", "version"],
+  properties: {
+    type: { type: "string", pattern: "^[a-z0-9][a-z0-9.+-]*$" },
+    namespace: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    name: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    version: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    qualifiers: { type: "object", additionalProperties: { type: "string" } },
+    subpath: { type: "string", minLength: 1, pattern: "^\\S+$" },
+  },
+  additionalProperties: false,
+};
+const evidence = {
+  type: "object",
+  required: [
+    "id",
+    "sourceId",
+    "sourceKind",
+    "sourceUrl",
+    "retrievedAt",
+    "contentHash",
+    "evidenceType",
+  ],
+  properties: {
+    id,
+    sourceId: id,
+    sourceKind: {
+      enum: [
+        "registry",
+        "curated",
+        "repository",
+        "documentation",
+        "classifier",
+        "firecrawl",
+      ],
+    },
+    sourceUrl: url,
+    retrievedAt: timestamp,
+    contentHash: sha256,
+    evidenceType: id,
+    locator: { type: "string", maxLength: 256 },
+    excerpt: { type: "string", maxLength: 2048 },
+    rawResponse: { type: "string", maxLength: 8192 },
+  },
+  additionalProperties: false,
+};
+const rank = {
+  type: "object",
+  required: ["sourceId", "basis"],
+  properties: {
+    sourceId: id,
+    basis: { enum: ["global", "source-ranked", "seed-ranked", "curated"] },
+    position: { type: "integer", minimum: 1 },
+    seed: id,
+  },
+  additionalProperties: false,
+};
+const candidate = {
+  type: "object",
+  required: [
+    "candidateId",
+    "ecosystem",
+    "purl",
+    "name",
+    "evidenceIds",
+    "rank",
+    "detections",
+    "resolution",
+  ],
+  properties: {
+    candidateId: id,
+    ecosystem: id,
+    purl,
+    name: id,
+    namespace: { type: "string", minLength: 1, pattern: "^\\S+$" },
+    releaseVersion: { type: "string", minLength: 1 },
+    homepageUrl: url,
+    repositoryUrl: url,
+    license: id,
+    description: { type: "string", maxLength: 10000 },
+    keywords: { type: "array", maxItems: 500, items: id },
+    downloads: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["sourceId", "value", "period", "sampledAt", "evidenceIds"],
+        properties: {
+          sourceId: id,
+          value: { type: "number", minimum: 0 },
+          period: id,
+          sampledAt: timestamp,
+          priorSample: { type: "number", minimum: 0 },
+          evidenceIds: evidenceRefs,
+        },
+        additionalProperties: false,
+      },
+    },
+    stars: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["sourceId", "value", "sampledAt", "evidenceIds"],
+        properties: {
+          sourceId: id,
+          value: { type: "integer", minimum: 0 },
+          sampledAt: timestamp,
+          repositoryUrl: url,
+          evidenceIds: evidenceRefs,
+        },
+        additionalProperties: false,
+      },
+    },
+    evidenceIds: { ...evidenceRefs, minItems: 1 },
+    rank,
+    detections: {
+      type: "array",
+      items: {
+        type: "object",
+        required: [
+          "kind",
+          "name",
+          "confidence",
+          "classifierVersion",
+          "rationale",
+          "evidenceIds",
+        ],
+        properties: {
+          kind: { enum: ["framework", "category"] },
+          name: id,
+          confidence: { enum: ["unknown", "low", "medium", "high"] },
+          classifierVersion: id,
+          rationale: { type: "string", maxLength: 2000 },
+          evidenceIds: { ...evidenceRefs, minItems: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+    choiceAssessment: {
+      type: "object",
+      required: ["status", "summary", "factors", "evidenceIds"],
+      properties: {
+        score: { type: "number", minimum: 0, maximum: 1 },
+        status: { enum: ["advisory", "insufficient-data", "review-required"] },
+        summary: { type: "string", maxLength: 2000 },
+        factors: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["name", "weight", "evidenceIds"],
+            properties: {
+              name: id,
+              value: { type: "number" },
+              weight: { type: "number", minimum: 0, maximum: 1 },
+              evidenceIds: evidenceRefs,
+            },
+            additionalProperties: false,
+          },
+        },
+        evidenceIds: evidenceRefs,
+      },
+      additionalProperties: false,
+    },
+    observations: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["kind", "value", "sourceId", "evidenceIds"],
+        properties: {
+          kind: {
+            enum: [
+              "category",
+              "alternative",
+              "comparison",
+              "pro",
+              "con",
+              "opinion",
+              "repository",
+              "license",
+              "stars",
+            ],
+          },
+          value: { oneOf: [{ type: "string" }, { type: "number" }] },
+          sourceId: id,
+          evidenceIds: evidenceRefs,
+        },
+        additionalProperties: false,
+      },
+    },
+    resolution: {
+      type: "object",
+      required: ["status"],
+      properties: {
+        status: { enum: ["unresolved", "partial", "resolved"] },
+        packageManagerId: id,
+        packageCategoryId: id,
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
+export const candidateIngestionSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://sibylhub.com/schema/candidate-ingestion/1.0",
+  title: "SibylHub candidate-ingestion artifact",
+  type: "object",
+  required: [
+    "artifactKind",
+    "schemaVersion",
+    "crawl",
+    "sourceCoverage",
+    "candidates",
+    "evidence",
+    "diagnostics",
+    "telemetry",
+    "contentIdentity",
+  ],
+  properties: {
+    artifactKind: { const: "candidate-ingestion" },
+    schemaVersion: { const: "candidate-ingestion/1.0" },
+    crawl: {
+      type: "object",
+      required: ["id", "startedAt", "configHash", "classifierVersions"],
+      properties: {
+        id,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        configHash: sha256,
+        classifierVersions: { type: "object", additionalProperties: id },
+      },
+      additionalProperties: false,
+    },
+    sourceCoverage: {
+      type: "array",
+      items: {
+        type: "object",
+        required: [
+          "sourceId",
+          "ecosystem",
+          "status",
+          "rankBasis",
+          "discovered",
+          "deduplicated",
+          "detailed",
+          "normalized",
+          "classified",
+          "conflicted",
+          "synchronized",
+          "skipped",
+          "failed",
+        ],
+        properties: {
+          sourceId: id,
+          ecosystem: id,
+          status: {
+            enum: ["success", "partial", "failed", "skipped", "unsupported"],
+          },
+          rankBasis: {
+            enum: ["global", "source-ranked", "seed-ranked", "curated"],
+          },
+          seed: id,
+          sourceUrl: url,
+          discovered: counts,
+          deduplicated: counts,
+          detailed: counts,
+          normalized: counts,
+          classified: counts,
+          conflicted: counts,
+          synchronized: counts,
+          skipped: counts,
+          failed: counts,
+        },
+        additionalProperties: false,
+      },
+    },
+    candidates: { type: "array", items: candidate },
+    evidence: { type: "array", items: evidence },
+    diagnostics: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["severity", "code", "message"],
+        properties: {
+          severity: { enum: ["info", "warning", "error"] },
+          code: id,
+          message: { type: "string", maxLength: 2000 },
+          candidateId: id,
+          sourceId: id,
+        },
+        additionalProperties: false,
+      },
+    },
+    telemetry: {
+      type: "object",
+      required: [
+        "discovered",
+        "deduplicated",
+        "detailed",
+        "normalized",
+        "classified",
+        "conflicted",
+        "synchronized",
+        "skipped",
+        "failed",
+        "requests",
+      ],
+      properties: {
+        discovered: counts,
+        deduplicated: counts,
+        detailed: counts,
+        normalized: counts,
+        classified: counts,
+        conflicted: counts,
+        synchronized: counts,
+        skipped: counts,
+        failed: counts,
+        requests: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["sourceId", "requestClass", "attempts", "durationMs"],
+            properties: {
+              sourceId: id,
+              requestClass: id,
+              attempts: { type: "integer", minimum: 1 },
+              status: { type: "integer", minimum: 100, maximum: 599 },
+              durationMs: { type: "number", minimum: 0 },
+              pageOrSeed: id,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    contentIdentity: sha256,
+  },
+  additionalProperties: false,
+};
+
+export const validCandidateArtifact = {
+  artifactKind: "candidate-ingestion",
+  schemaVersion: "candidate-ingestion/1.0",
+  crawl: {
+    id: "crawl-2026-09-22",
+    startedAt: "2026-09-22T12:00:00.000Z",
+    completedAt: "2026-09-22T12:01:00.000Z",
+    configHash: `sha256:${"2".repeat(64)}`,
+    classifierVersions: { framework: "frameworks-1" },
+  },
+  sourceCoverage: [
+    {
+      sourceId: "npm",
+      ecosystem: "typescript",
+      status: "success",
+      rankBasis: "source-ranked",
+      discovered: 1,
+      deduplicated: 1,
+      detailed: 1,
+      normalized: 1,
+      classified: 1,
+      conflicted: 0,
+      synchronized: 0,
+      skipped: 0,
+      failed: 0,
+    },
+  ],
+  candidates: [
+    {
+      candidateId: "pkg:npm/%40types/react@managed",
+      ecosystem: "typescript",
+      purl: {
+        type: "npm",
+        namespace: "@types",
+        name: "react",
+        version: "managed",
+      },
+      name: "react",
+      namespace: "@types",
+      evidenceIds: ["evidence-npm-react"],
+      rank: { sourceId: "npm", basis: "source-ranked", position: 1 },
+      detections: [],
+      resolution: { status: "unresolved" },
+    },
+  ],
+  evidence: [
+    {
+      id: "evidence-npm-react",
+      sourceId: "npm",
+      sourceKind: "registry",
+      sourceUrl: "https://registry.npmjs.org/react",
+      retrievedAt: "2026-09-22T12:00:00.000Z",
+      contentHash: `sha256:${"1".repeat(64)}`,
+      evidenceType: "package-metadata",
+      excerpt: "React is a library for building user interfaces.",
+    },
+  ],
+  diagnostics: [],
+  telemetry: {
+    discovered: 1,
+    deduplicated: 1,
+    detailed: 1,
+    normalized: 1,
+    classified: 1,
+    conflicted: 0,
+    synchronized: 0,
+    skipped: 0,
+    failed: 0,
+    requests: [],
+  },
+  contentIdentity: `sha256:${"3".repeat(64)}`,
+};
+
+export const unsafeCandidateArtifact = {
+  ...validCandidateArtifact,
+  evidence: [
+    {
+      ...validCandidateArtifact.evidence[0],
+      excerpt: "Authorization: Bearer do-not-store",
+    },
+  ],
+};
+
+export const unsupportedCandidateArtifact = {
+  ...validCandidateArtifact,
+  schemaVersion: "candidate-ingestion/9.9",
+};

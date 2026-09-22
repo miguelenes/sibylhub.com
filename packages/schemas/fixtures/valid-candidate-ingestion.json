@@ -1,0 +1,82 @@
+{
+  "artifactKind": "candidate-ingestion",
+  "schemaVersion": "candidate-ingestion/1.0",
+  "crawl": {
+    "id": "crawl-2026-09-22",
+    "startedAt": "2026-09-22T12:00:00.000Z",
+    "completedAt": "2026-09-22T12:01:00.000Z",
+    "configHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "classifierVersions": {
+      "framework": "frameworks-1"
+    }
+  },
+  "sourceCoverage": [
+    {
+      "sourceId": "npm",
+      "ecosystem": "typescript",
+      "status": "success",
+      "rankBasis": "source-ranked",
+      "discovered": 1,
+      "deduplicated": 1,
+      "detailed": 1,
+      "normalized": 1,
+      "classified": 1,
+      "conflicted": 0,
+      "synchronized": 0,
+      "skipped": 0,
+      "failed": 0
+    }
+  ],
+  "candidates": [
+    {
+      "candidateId": "pkg:npm/%40types/react@managed",
+      "ecosystem": "typescript",
+      "purl": {
+        "type": "npm",
+        "namespace": "@types",
+        "name": "react",
+        "version": "managed"
+      },
+      "name": "react",
+      "namespace": "@types",
+      "evidenceIds": [
+        "evidence-npm-react"
+      ],
+      "rank": {
+        "sourceId": "npm",
+        "basis": "source-ranked",
+        "position": 1
+      },
+      "detections": [],
+      "resolution": {
+        "status": "unresolved"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-npm-react",
+      "sourceId": "npm",
+      "sourceKind": "registry",
+      "sourceUrl": "https://registry.npmjs.org/react",
+      "retrievedAt": "2026-09-22T12:00:00.000Z",
+      "contentHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidenceType": "package-metadata",
+      "excerpt": "React is a library for building user interfaces."
+    }
+  ],
+  "diagnostics": [],
+  "telemetry": {
+    "discovered": 1,
+    "deduplicated": 1,
+    "detailed": 1,
+    "normalized": 1,
+    "classified": 1,
+    "conflicted": 0,
+    "synchronized": 0,
+    "skipped": 0,
+    "failed": 0,
+    "requests": []
+  },
+  "contentIdentity": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+}
