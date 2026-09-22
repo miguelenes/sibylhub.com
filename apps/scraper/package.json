@@ -38,17 +38,17 @@
   },
   "dependencies": {
     "@sibylhub/schemas": "workspace:*",
-    "cheerio": "1.0.0-rc.12",
-    "commander": "14.0.3",
+    "cheerio": "1.2.0",
+    "commander": "15.0.0",
     "p-queue": "9.3.3"
   },
   "devDependencies": {
     "@sibylhub/typescript-config": "workspace:*",
-    "@types/node": "24.8.1",
-    "@vitest/coverage-v8": "4.1.11",
-    "prettier": "3.9.6",
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "prettier": "3.9.8",
     "tsup": "8.5.1",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
   }
 }
