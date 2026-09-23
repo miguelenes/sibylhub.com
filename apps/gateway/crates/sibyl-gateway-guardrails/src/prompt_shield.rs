@@ -45,10 +45,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{AzureContentSafetyConfig, GuardrailHookPoint};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_core::models::{AzureContentSafetyConfig, GuardrailHookPoint};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::chunk::chunk_text;
 use crate::{Guardrail, GuardrailVerdict};
@@ -354,9 +354,9 @@ fn collect_input_text(req: &ChatFormat) -> String {
 mod tests {
     use std::time::Duration;
 
+    use serde_json::json;
     use sibyl_gateway_core::models::AzureContentSafetyConfig;
     use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
-    use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

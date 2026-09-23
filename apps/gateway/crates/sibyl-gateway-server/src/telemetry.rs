@@ -1475,7 +1475,11 @@ mod tests {
         let expected = ordered_events(OPENING + BURST);
         let mut events = expected.clone().into_iter();
         for event in events.by_ref().take(OPENING) {
-            sink.try_emit("test", event, sibyl_gateway_obs::UsageEventLabels::default());
+            sink.try_emit(
+                "test",
+                event,
+                sibyl_gateway_obs::UsageEventLabels::default(),
+            );
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while batches.lock().unwrap().is_empty() {
@@ -1486,7 +1490,11 @@ mod tests {
         // The control plane is now holding that POST, so nothing is being
         // drained while the rest of the burst arrives.
         for event in events {
-            sink.try_emit("test", event, sibyl_gateway_obs::UsageEventLabels::default());
+            sink.try_emit(
+                "test",
+                event,
+                sibyl_gateway_obs::UsageEventLabels::default(),
+            );
         }
         drop(sink);
         worker.await.unwrap();

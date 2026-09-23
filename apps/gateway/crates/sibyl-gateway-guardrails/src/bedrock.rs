@@ -32,10 +32,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{
-    BedrockAWSCredentials, BedrockConfig, BedrockLatencyMode, GuardrailHookPoint,
-};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_credential_types::Credentials;
@@ -51,6 +47,10 @@ use aws_sdk_bedrockruntime::types::{
 use aws_sdk_bedrockruntime::Client;
 use aws_smithy_runtime_api::client::result::SdkError;
 use aws_smithy_runtime_api::http::Response;
+use sibyl_gateway_core::models::{
+    BedrockAWSCredentials, BedrockConfig, BedrockLatencyMode, GuardrailHookPoint,
+};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::{Guardrail, GuardrailVerdict, SegmentsOutcome};
 

@@ -14,16 +14,16 @@
 //! Only OpenAI models support this endpoint. Non-OpenAI models receive a
 //! 400 with an explanatory message.
 
-use sibyl_gateway_hub::{ChatFormat, ChatMessage, Role};
-use sibyl_gateway_obs::{
-    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, UsageEvent, UsageLabels,
-};
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::StreamExt;
 use serde_json::Value;
+use sibyl_gateway_hub::{ChatFormat, ChatMessage, Role};
+use sibyl_gateway_obs::{
+    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, UsageEvent, UsageLabels,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -626,11 +626,12 @@ async fn dispatch(
     *audit_out = resolved_chain.audit_log();
     if !resolved_chain.is_empty() {
         let chat = responses_input_to_chat(&model_name, body);
-        let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(
-            resolved_chain.as_ref(),
-            &chat,
-        )
-        .await;
+        let (verdict, hits) =
+            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(
+                resolved_chain.as_ref(),
+                &chat,
+            )
+            .await;
         monitor_hits_out.extend(hits);
         // Segment pass: one Bedrock call over the body's text slots; an
         // ANONYMIZE disposition writes the masked text back into the
@@ -1242,7 +1243,10 @@ async fn responses_to_target(
     if let Some(r) = pk_entry.value.request.as_ref() {
         sibyl_gateway_provider_openai::overrides::apply_param_renames(&mut body, &r.param_renames);
         if let Some(constraints) = &r.param_constraints {
-            sibyl_gateway_provider_openai::overrides::apply_param_constraints(&mut body, constraints);
+            sibyl_gateway_provider_openai::overrides::apply_param_constraints(
+                &mut body,
+                constraints,
+            );
         }
         sibyl_gateway_provider_openai::overrides::apply_default_body_fields(
             &mut body,
@@ -1407,7 +1411,8 @@ async fn responses_to_target(
         // for observation. Requests with no output-hook guardrail keep the
         // zero-copy verbatim passthrough.
         let output_policy = sibyl_gateway_guardrails::Guardrail::stream_output_policy(chain);
-        if sibyl_gateway_guardrails::Guardrail::runs_on_output(chain) && output_policy.holds_back() {
+        if sibyl_gateway_guardrails::Guardrail::runs_on_output(chain) && output_policy.holds_back()
+        {
             // Hold the whole SSE response back to scan it, but cap the
             // buffer so a huge (or malicious) upstream response can't OOM the
             // gateway. Mirror the chat surface's secure BufferFull default
@@ -1417,7 +1422,8 @@ async fn responses_to_target(
             // taken from the chain's resolved streaming policy.
             let max_buffer_bytes = match output_policy {
                 sibyl_gateway_guardrails::StreamOutputPolicy::BufferFull {
-                    max_buffer_bytes, ..
+                    max_buffer_bytes,
+                    ..
                 } => max_buffer_bytes,
                 _ => sibyl_gateway_guardrails::DEFAULT_STREAM_OUTPUT_BUFFER_BYTES,
             };
@@ -1651,7 +1657,10 @@ async fn responses_to_target(
             }
             let synth = synth_chat_response(&upstream_model, out_text);
             let (verdict, hits) =
-                sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(chain, &synth).await;
+                sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
+                    chain, &synth,
+                )
+                .await;
             let mut output_monitor_hits = hits;
             // Segment pass over the held SSE frames: one Bedrock call; an
             // ANONYMIZE disposition rewrites `buf` in place (#932 bedrock
@@ -2084,7 +2093,10 @@ async fn responses_to_target(
         if sibyl_gateway_guardrails::Guardrail::runs_on_output(chain) {
             let synth = synth_chat_response(&upstream_model, responses_output_text(&json_body));
             let (verdict, hits) =
-                sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(chain, &synth).await;
+                sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
+                    chain, &synth,
+                )
+                .await;
             output_monitor_hits.extend(hits);
             let verdict = crate::redact::moderate_body(
                 chain,
@@ -2362,7 +2374,8 @@ async fn responses_cross_provider_to_target(
         let output_guardrail = (!chain.is_empty()
             && sibyl_gateway_guardrails::Guardrail::runs_on_output(chain.as_ref()))
         .then(|| chain.clone());
-        let output_policy = sibyl_gateway_guardrails::Guardrail::stream_output_policy(chain.as_ref());
+        let output_policy =
+            sibyl_gateway_guardrails::Guardrail::stream_output_policy(chain.as_ref());
         let hold_back = output_policy.holds_back();
         let max_buffer_bytes = match output_policy {
             sibyl_gateway_guardrails::StreamOutputPolicy::BufferFull {
@@ -2651,8 +2664,11 @@ async fn responses_cross_provider_to_target(
     let mut output_monitor_hits: Vec<sibyl_gateway_core::GuardrailMonitorHit> = Vec::new();
     if sibyl_gateway_guardrails::Guardrail::runs_on_output(chain.as_ref()) {
         let (verdict, hits) =
-            sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(chain.as_ref(), &resp)
-                .await;
+            sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
+                chain.as_ref(),
+                &resp,
+            )
+            .await;
         output_monitor_hits.extend(hits);
         let verdict = crate::redact::moderate_body(
             chain.as_ref(),
@@ -3133,7 +3149,9 @@ impl SseTextCapture {
 /// end-of-stream scan's monitor observations (AISIX-Cloud#1010) — the Drop
 /// (disconnect) path passes none: the response never completed, so there is
 /// nothing final to observe, matching the chat surface's disconnect behavior.
-struct ResponsesUsageGuard<F: FnOnce(ResponseUsage, String, Vec<sibyl_gateway_core::GuardrailMonitorHit>)> {
+struct ResponsesUsageGuard<
+    F: FnOnce(ResponseUsage, String, Vec<sibyl_gateway_core::GuardrailMonitorHit>),
+> {
     slot: Option<(F, Option<ResponseUsage>, Option<SseTextCapture>)>,
 }
 
@@ -4030,8 +4048,16 @@ mod tests {
         assert_eq!(seen[2].0, sibyl_gateway_hub::Role::Assistant);
         assert_eq!(seen[3].0, sibyl_gateway_hub::Role::User);
         assert_eq!(seen[4].0, sibyl_gateway_hub::Role::Assistant, "reasoning");
-        assert_eq!(seen[5].0, sibyl_gateway_hub::Role::Assistant, "function_call");
-        assert_eq!(seen[6].0, sibyl_gateway_hub::Role::Tool, "function_call_output");
+        assert_eq!(
+            seen[5].0,
+            sibyl_gateway_hub::Role::Assistant,
+            "function_call"
+        );
+        assert_eq!(
+            seen[6].0,
+            sibyl_gateway_hub::Role::Tool,
+            "function_call_output"
+        );
         // The call's name and arguments are the scannable text.
         assert!(seen[5].1.contains("lookup"), "{:?}", seen[5]);
         assert!(seen[5].1.contains("SECRET"), "{:?}", seen[5]);
@@ -4151,14 +4177,14 @@ mod tests {
         assert_eq!(chat.messages[1].content_str(), "PAYLOAD");
     }
 
+    use axum::body::to_bytes;
+    use axum::http::{Request, StatusCode};
     use sibyl_gateway_core::resource::ResourceEntry;
     use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
     use sibyl_gateway_hub::Hub;
     use sibyl_gateway_provider_anthropic::AnthropicBridge;
     use sibyl_gateway_provider_openai::OpenAiBridge;
-    use axum::body::to_bytes;
-    use axum::http::{Request, StatusCode};
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{body_partial_json, header, method, path};
@@ -5123,7 +5149,9 @@ mod tests {
 
     /// `keyword_output_guardrail` with `enforcement_mode: monitor` — the
     /// chain resolves to `EndOfStreamCheck` (never holds back, never blocks).
-    fn keyword_output_guardrail_monitor(literal: &str) -> ResourceEntry<sibyl_gateway_core::Guardrail> {
+    fn keyword_output_guardrail_monitor(
+        literal: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::Guardrail> {
         let json = format!(
             r#"{{"name":"test-out-mon","enabled":true,"hook_point":"output","fail_open":false,"enforcement_mode":"monitor","kind":"keyword","patterns":[{{"kind":"literal","value":"{literal}"}}]}}"#
         );
@@ -5256,8 +5284,8 @@ mod tests {
     /// lose its billing/logs record to a disconnect during the observation.
     #[tokio::test]
     async fn monitor_scan_disconnect_still_emits_usage_event() {
-        use sibyl_gateway_obs::UsageSink;
         use futures::StreamExt;
+        use sibyl_gateway_obs::UsageSink;
         let upstream = MockServer::start().await;
         let sse = "event: response.output_text.delta\n\
                    data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello there\"}\n\n\

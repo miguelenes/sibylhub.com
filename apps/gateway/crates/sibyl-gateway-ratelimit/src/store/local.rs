@@ -7,10 +7,10 @@
 //! exists to fix. `member` is ignored here (concurrency is a plain
 //! `in_flight` counter).
 
-use sibyl_gateway_core::{RateLimit, RateLimitScope};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use sibyl_gateway_core::{RateLimit, RateLimitScope};
 use std::sync::Arc;
 
 use super::{

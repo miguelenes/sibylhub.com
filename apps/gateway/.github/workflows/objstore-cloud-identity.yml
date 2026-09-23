@@ -20,7 +20,7 @@
 # unconfigured.
 #
 # Required repository secrets (identifiers, not static keys):
-#   SIBYL_GATEWAY_E2E_OIDC_AWS_ROLE_ARN   IAM role to assume (trusts repo:api7/sibyl-gateway via GitHub OIDC)
+#   SIBYL_GATEWAY_E2E_OIDC_AWS_ROLE_ARN   IAM role to assume (trusts repo:sibylhub/sibylhub.com via GitHub OIDC)
 #   SIBYL_GATEWAY_E2E_OBJSTORE_S3_BUCKET  the S3 test bucket (reused from the credential_ref job)
 #   SIBYL_GATEWAY_E2E_OBJSTORE_S3_REGION  the bucket's region (configure-aws-credentials requires it)
 name: objstore-cloud-identity

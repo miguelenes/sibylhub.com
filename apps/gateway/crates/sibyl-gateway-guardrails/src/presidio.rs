@@ -49,10 +49,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{GuardrailHookPoint, PresidioConfig};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_core::models::{GuardrailHookPoint, PresidioConfig};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::pii::PiiAction;
 use crate::{Guardrail, GuardrailVerdict, SegmentsOutcome, StreamOutputPolicy};
@@ -554,9 +554,9 @@ fn collect_input_text(req: &ChatFormat) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use sibyl_gateway_core::models::{PresidioConfig, PresidioEntityConfig};
     use sibyl_gateway_hub::{ChatFormat, ChatMessage};
-    use serde_json::json;
     use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

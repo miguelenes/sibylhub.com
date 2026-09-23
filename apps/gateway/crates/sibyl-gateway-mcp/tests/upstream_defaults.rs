@@ -22,9 +22,9 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use sibyl_gateway_mcp::{McpBridge, McpUpstream, RmcpBridge};
 use axum::extract::State;
 use axum::response::IntoResponse;
+use sibyl_gateway_mcp::{McpBridge, McpUpstream, RmcpBridge};
 
 /// Counts upstream `tools/list` and `tools/call` requests, so the tests can
 /// assert exactly how many times the bridge actually hit the wire.

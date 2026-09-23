@@ -59,7 +59,11 @@ impl ModelRateLimit {
     /// `ModelRateLimit` carrying the model identity (name + entry ID)
     /// needed for model-scope policy matching. The inline rate limit
     /// is `None` when the model has no configured limit.
-    pub fn from_model(model_name: &str, model_entry_id: &str, model: &sibyl_gateway_core::Model) -> Self {
+    pub fn from_model(
+        model_name: &str,
+        model_entry_id: &str,
+        model: &sibyl_gateway_core::Model,
+    ) -> Self {
         let limits = model
             .rate_limit
             .as_ref()
@@ -722,8 +726,8 @@ mod tests {
 
     #[test]
     fn policy_candidates_preserve_all_matching_layers() {
-        use sibyl_gateway_core::{resource::ResourceEntry, snapshot::ResourceTable};
         use serde_json::json;
+        use sibyl_gateway_core::{resource::ResourceEntry, snapshot::ResourceTable};
         let table = ResourceTable::new();
         let mut id = 0;
         let mut add = |policy| {

@@ -165,7 +165,8 @@ fn ref_matches(entry: &McpToolRef, addressed: Option<(&str, &str)>) -> bool {
     let Some((server_id, tool)) = addressed else {
         return false;
     };
-    entry.server_id == server_id && sibyl_gateway_core::wildcard::wildcard_matches(&entry.tool, tool)
+    entry.server_id == server_id
+        && sibyl_gateway_core::wildcard::wildcard_matches(&entry.tool, tool)
 }
 
 impl AllowLayer {

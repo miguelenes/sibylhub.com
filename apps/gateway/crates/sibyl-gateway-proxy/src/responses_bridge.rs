@@ -23,11 +23,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use serde_json::{json, Map, Value};
 use sibyl_gateway_hub::{
     ChatChunk, ChatChunkStream, ChatFormat, ChatMessage, ChatResponse, FinishReason, Role,
     UsageStats,
 };
-use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 /// Translate a `/v1/responses` request body into the gateway's canonical

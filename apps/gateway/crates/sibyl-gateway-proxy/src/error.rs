@@ -47,12 +47,12 @@
 //! [`ProxyError::into_anthropic_response`] explicitly so the
 //! Anthropic shape lands on its responses.
 
-use sibyl_gateway_hub::BridgeError;
-use sibyl_gateway_ratelimit::RateLimitError;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
+use sibyl_gateway_hub::BridgeError;
+use sibyl_gateway_ratelimit::RateLimitError;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ErrorEnvelope {
@@ -585,7 +585,8 @@ impl ProxyError {
         // per-attempt telemetry through `Display`, while the caller keeps
         // the bare sentence it has always had — an `api_base` is internal
         // topology and does not belong in a customer-facing envelope.
-        if let ProxyError::Bridge(sibyl_gateway_hub::BridgeError::Timeout { elapsed_ms, .. }) = self {
+        if let ProxyError::Bridge(sibyl_gateway_hub::BridgeError::Timeout { elapsed_ms, .. }) = self
+        {
             return ErrorEnvelope::new(
                 format!("upstream request timed out after {elapsed_ms}ms"),
                 self.kind(),

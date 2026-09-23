@@ -20,8 +20,8 @@
 //!   sync because they run from `Drop` and from the synchronous SSE
 //!   completion callback; the Redis impl makes them fire-and-forget.
 
-use sibyl_gateway_core::RateLimit;
 use async_trait::async_trait;
+use sibyl_gateway_core::RateLimit;
 
 use crate::error::RateLimitError;
 use crate::limiter::RateLimitStatus;

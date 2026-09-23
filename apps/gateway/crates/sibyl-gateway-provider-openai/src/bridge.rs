@@ -19,14 +19,6 @@
 //! - malformed JSON from upstream → `BridgeError::UpstreamDecode`
 //! - elapsed deadline → `BridgeError::Timeout { elapsed_ms }`
 
-use sibyl_gateway_core::{RequestOverrides, ResponseOverrides, StreamDoneMarker};
-use sibyl_gateway_hub::structured_output::close_object_schemas;
-use sibyl_gateway_hub::url_cache::cached_endpoint_url;
-use sibyl_gateway_hub::{
-    apply_request_headers, Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream,
-    ChatFormat, ChatResponse, EmbeddingRequest, EmbeddingResponse, SseDecoder, SseEvent,
-    UpstreamHeaderContext,
-};
 use async_trait::async_trait;
 use futures::StreamExt;
 use http::{
@@ -35,6 +27,14 @@ use http::{
 };
 use reqwest::{header, Client, StatusCode};
 use serde_json::Value;
+use sibyl_gateway_core::{RequestOverrides, ResponseOverrides, StreamDoneMarker};
+use sibyl_gateway_hub::structured_output::close_object_schemas;
+use sibyl_gateway_hub::url_cache::cached_endpoint_url;
+use sibyl_gateway_hub::{
+    apply_request_headers, Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream,
+    ChatFormat, ChatResponse, EmbeddingRequest, EmbeddingResponse, SseDecoder, SseEvent,
+    UpstreamHeaderContext,
+};
 use std::time::{Duration, Instant};
 
 use crate::overrides::{
@@ -2094,8 +2094,8 @@ data: [DONE]\n";
     // the operator-side bridge identity is already emitted via the
     // `tracing::info!` spans in `build_chunk_stream` / dispatch sites
     // (the `bridge=<name>` field on the span). Tests removed:
-    //   - chat_default_headers_cannot_override_x_aisix_bridge
-    //   - chat_emits_x_aisix_bridge_openai_for_default_bridge
-    //   - chat_emits_x_aisix_bridge_for_with_name_variant
-    //   - chat_stream_emits_x_aisix_bridge_for_with_name_variant
+    //   - chat_default_headers_cannot_override_x_sibylhub_bridge
+    //   - chat_emits_x_sibylhub_bridge_openai_for_default_bridge
+    //   - chat_emits_x_sibylhub_bridge_for_with_name_variant
+    //   - chat_stream_emits_x_sibylhub_bridge_for_with_name_variant
 }

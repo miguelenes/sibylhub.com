@@ -177,8 +177,7 @@ observability:
   metrics:
     # Complete label lists per metric. Omitted metrics retain their defaults.
     # Restart after changing labels. [] removes all optional business labels;
-    # gauges retain required identity labels. See the variable reference:
-    # https://docs.api7.ai/ai-gateway/dev/reference/metric-labels
+    # gauges retain required identity labels. The variable reference is `crates/sibyl-gateway-obs/src/metric_labels.rs`:
     # Env: SIBYL_GATEWAY_OBSERVABILITY__METRICS__LABELS='{"sibyl_gateway_request_ttft_seconds":["provider_key_name","model"]}'
     # labels:
     #   sibyl_gateway_request_ttft_seconds:

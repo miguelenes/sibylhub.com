@@ -1,5 +1,5 @@
 //! pgo-trainer — deterministic training-traffic generator for the PGO release
-//! build (api7/sibyl-gateway#967).
+//! build (api7/aisix#967).
 //!
 //! One process, two roles:
 //!

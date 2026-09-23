@@ -11,14 +11,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_a2a::{A2aAuth, A2aBridge, A2aError, A2aUpstream, HttpBridge, DEFAULT_UPSTREAM_TIMEOUT};
-use sibyl_gateway_core::A2aProtocolVersion;
 use axum::http::header::LOCATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
+use sibyl_gateway_a2a::{
+    A2aAuth, A2aBridge, A2aError, A2aUpstream, HttpBridge, DEFAULT_UPSTREAM_TIMEOUT,
+};
+use sibyl_gateway_core::A2aProtocolVersion;
 
 /// An upstream pinned to A2A 1.0 — the default for a registered agent.
 fn upstream(url: String, auth: A2aAuth) -> A2aUpstream {
@@ -598,7 +600,10 @@ fn resolved(
     patterns: &[&str],
     sent: &[(&str, &str)],
 ) -> Vec<(axum::http::HeaderName, axum::http::HeaderValue)> {
-    sibyl_gateway_a2a::forwarded_client_headers(&agent_forwarding(patterns), Some(&client_sent(sent)))
+    sibyl_gateway_a2a::forwarded_client_headers(
+        &agent_forwarding(patterns),
+        Some(&client_sent(sent)),
+    )
 }
 
 /// Values the upstream saw under `name`, from an echoed header dump.

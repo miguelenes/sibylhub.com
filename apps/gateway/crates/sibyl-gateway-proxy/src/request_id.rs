@@ -25,8 +25,9 @@ pub(crate) fn new_request_id() -> String {
 ///
 /// It is **recorded, never adopted**: whether a caller-supplied id becomes
 /// this gateway's own `request_id` stays governed by
-/// `proxy.request_id.accept_headers`, which by default takes only
-/// `x-sibylhub-request-id`. So a deployment behind an ingress logs two ids
+/// `proxy.request_id.accept_headers`, which by default takes
+/// `x-sibylhub-request-id` followed by the legacy `x-aisix-request-id`
+/// alias. So a deployment behind an ingress logs two ids
 /// that mean different things — the ingress's `downstream_request_id` and
 /// the gateway's `request_id` — and neither can be mistaken for the other.
 /// When an operator does list this header in `accept_headers`, the two
@@ -213,11 +214,9 @@ pub(crate) async fn ensure_request_id(
     // or a duplicated header — degrades to a locally-rooted one, and the
     // caller's `tracestate` is only kept alongside a valid parent.
     let remote = remote_trace_context(request.headers());
-    request
-        .extensions_mut()
-        .insert(std::sync::Arc::new(sibyl_gateway_obs::RequestTraceBundle::new(
-            remote,
-        )));
+    request.extensions_mut().insert(std::sync::Arc::new(
+        sibyl_gateway_obs::RequestTraceBundle::new(remote),
+    ));
 
     let span = tracing::info_span!(
         "request",
@@ -260,15 +259,21 @@ pub(crate) async fn ensure_request_id(
 /// combine as a comma-joined list) is screened and kept only when the
 /// parent it travelled with was valid. Invalid → `None` → a
 /// locally-rooted trace, never a rejected request.
-fn remote_trace_context(headers: &axum::http::HeaderMap) -> Option<sibyl_gateway_obs::RemoteTraceContext> {
-    let mut parents = headers.get_all(sibyl_gateway_obs::TRACEPARENT_HEADER).iter();
+fn remote_trace_context(
+    headers: &axum::http::HeaderMap,
+) -> Option<sibyl_gateway_obs::RemoteTraceContext> {
+    let mut parents = headers
+        .get_all(sibyl_gateway_obs::TRACEPARENT_HEADER)
+        .iter();
     let parent = parents.next()?;
     if parents.next().is_some() {
         tracing::debug!("multiple traceparent headers; starting a local trace");
         return None;
     }
-    let Some((trace_id, parent_span_id, flags)) =
-        parent.to_str().ok().and_then(sibyl_gateway_obs::parse_traceparent)
+    let Some((trace_id, parent_span_id, flags)) = parent
+        .to_str()
+        .ok()
+        .and_then(sibyl_gateway_obs::parse_traceparent)
     else {
         tracing::debug!("unusable traceparent header; starting a local trace");
         return None;
@@ -284,7 +289,9 @@ fn remote_trace_context(headers: &axum::http::HeaderMap) -> Option<sibyl_gateway
             .map(|v| v.to_str())
             .collect();
         match values {
-            Ok(values) if !values.is_empty() => sibyl_gateway_obs::screen_tracestate(&values.join(",")),
+            Ok(values) if !values.is_empty() => {
+                sibyl_gateway_obs::screen_tracestate(&values.join(","))
+            }
             _ => None,
         }
     };
@@ -345,12 +352,12 @@ pub(crate) fn in_request_span<T: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ProxyConfig, RequestIdConfig};
-    use sibyl_gateway_hub::Hub;
     use axum::response::IntoResponse;
     use axum::routing::get;
     use axum::Router;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{GatewaySnapshot, ProxyConfig, RequestIdConfig};
+    use sibyl_gateway_hub::Hub;
     use std::sync::Arc;
     use tower::ServiceExt;
 

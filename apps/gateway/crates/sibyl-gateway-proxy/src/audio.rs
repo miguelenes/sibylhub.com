@@ -17,9 +17,6 @@
 //! Auth and model authorisation follow the same rules as every other
 //! proxy endpoint.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_hub::{ChatMessage, ChatResponse, FinishReason, UsageStats};
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::body::Bytes;
 use axum::extract::{Multipart, State};
 use axum::http::{header, HeaderMap};
@@ -27,6 +24,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use reqwest::multipart;
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_hub::{ChatMessage, ChatResponse, FinishReason, UsageStats};
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use std::time::{Duration, Instant};
 
 use crate::auth::AuthenticatedKey;
@@ -941,9 +941,10 @@ fn observe_transcript_events(
         let Ok(value) = serde_json::from_str::<Value>(payload) else {
             continue;
         };
-        if let Some(err) =
-            sibyl_gateway_hub::capture_in_band_error(payload, sibyl_gateway_hub::UpstreamWire::OpenAI)
-        {
+        if let Some(err) = sibyl_gateway_hub::capture_in_band_error(
+            payload,
+            sibyl_gateway_hub::UpstreamWire::OpenAI,
+        ) {
             crate::attempt::StreamFailure::record(&mut observed.failure, &err);
             continue;
         }
@@ -1075,7 +1076,8 @@ async fn multipart_dispatch(
     // the live path, scanning once at end-of-stream.
     let live_relay = stream_requested
         && !(sibyl_gateway_guardrails::Guardrail::runs_on_output(&resolved_chain)
-            && sibyl_gateway_guardrails::Guardrail::stream_output_policy(&resolved_chain).holds_back());
+            && sibyl_gateway_guardrails::Guardrail::stream_output_policy(&resolved_chain)
+                .holds_back());
     let mut redactions = crate::redact::RedactionCounts::new();
     let mut monitor_hits: Vec<sibyl_gateway_core::GuardrailMonitorHit> = Vec::new();
     if !resolved_chain.is_empty() {
@@ -1099,7 +1101,8 @@ async fn multipart_dispatch(
         {
             let chat = sibyl_gateway_hub::ChatFormat::new(&model_name, prompt_messages);
             let (verdict, hits) =
-                sibyl_gateway_guardrails::Guardrail::check_input_observed(&resolved_chain, &chat).await;
+                sibyl_gateway_guardrails::Guardrail::check_input_observed(&resolved_chain, &chat)
+                    .await;
             monitor_hits.extend(hits);
             if let sibyl_gateway_guardrails::GuardrailVerdict::Block {
                 reason,
@@ -1127,9 +1130,10 @@ async fn multipart_dispatch(
                     continue;
                 }
                 if let Ok(text) = std::str::from_utf8(data) {
-                    if let Some(r) =
-                        sibyl_gateway_guardrails::Guardrail::redact_input_text(&resolved_chain, text)
-                    {
+                    if let Some(r) = sibyl_gateway_guardrails::Guardrail::redact_input_text(
+                        &resolved_chain,
+                        text,
+                    ) {
                         *data = Bytes::from(r.text.into_bytes());
                         crate::redact::merge_counts(&mut redactions, r.counts);
                     }
@@ -1382,11 +1386,12 @@ async fn multipart_dispatch(
                                 elapsed_ms: d.as_millis() as u64,
                                 cause: String::new(),
                             })?
-                            .map_err(|e| sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())),
-                        None => resp
-                            .bytes()
-                            .await
-                            .map_err(|e| sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())),
+                            .map_err(|e| {
+                                sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())
+                            }),
+                        None => resp.bytes().await.map_err(|e| {
+                            sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())
+                        }),
                     }
                 };
                 let body_bytes = read.await.map_err(|be| {
@@ -1433,8 +1438,8 @@ async fn multipart_dispatch(
             // Monitor-only output chains still get their end-of-stream
             // observation (AISIX-Cloud#1010); a block-capable chain never
             // reaches here — `live_relay` sent it down the buffered path.
-            let eos_scan =
-                sibyl_gateway_guardrails::Guardrail::runs_on_output(&resolved_chain).then(|| {
+            let eos_scan = sibyl_gateway_guardrails::Guardrail::runs_on_output(&resolved_chain)
+                .then(|| {
                     crate::guardrail_stream::EosOutputScan::new(
                         std::sync::Arc::new(resolved_chain),
                         upstream_model.clone(),
@@ -1637,7 +1642,8 @@ async fn multipart_dispatch(
                 usage: UsageStats::default(),
             };
             let (verdict, hits) =
-                sibyl_gateway_guardrails::Guardrail::check_output_observed(&resolved_chain, &synth).await;
+                sibyl_gateway_guardrails::Guardrail::check_output_observed(&resolved_chain, &synth)
+                    .await;
             monitor_hits.extend(hits);
             if let sibyl_gateway_guardrails::GuardrailVerdict::Block {
                 reason,
@@ -1935,7 +1941,10 @@ async fn speech_dispatch(
     if let Some(r) = pk_entry.value.request.as_ref() {
         sibyl_gateway_provider_openai::overrides::apply_param_renames(&mut body, &r.param_renames);
         if let Some(constraints) = &r.param_constraints {
-            sibyl_gateway_provider_openai::overrides::apply_param_constraints(&mut body, constraints);
+            sibyl_gateway_provider_openai::overrides::apply_param_constraints(
+                &mut body,
+                constraints,
+            );
         }
         sibyl_gateway_provider_openai::overrides::apply_default_body_fields(
             &mut body,
@@ -2472,13 +2481,13 @@ fn emit_access_log(
 #[cfg(test)]
 mod tests {
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2559,7 +2568,9 @@ mod tests {
     /// A PK carrying `request.*` operator overrides (AISIX-Cloud#867):
     /// a default body field + a default header that the audio handlers
     /// must apply to the upstream request.
-    fn provider_key_entry_overrides(api_base: &str) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
+    fn provider_key_entry_overrides(
+        api_base: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
         let json = format!(
             r#"{{"display_name":"openai-up","secret":"sk-up","api_base":"{api_base}","provider":"openai","adapter":"openai","request":{{"default_body_fields":{{"safe_flag":true}},"default_headers":{{"x-custom":"trace-on"}}}}}}"#
         );
@@ -4016,7 +4027,9 @@ mod tests {
         assert_eq!(event.completion_tokens, 7);
     }
 
-    fn keyword_output_guardrail_fail_open(literal: &str) -> ResourceEntry<sibyl_gateway_core::Guardrail> {
+    fn keyword_output_guardrail_fail_open(
+        literal: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::Guardrail> {
         let json = format!(
             r#"{{"name":"t-out-open","enabled":true,"hook_point":"output","fail_open":true,"kind":"keyword","patterns":[{{"kind":"literal","value":"{literal}"}}]}}"#
         );

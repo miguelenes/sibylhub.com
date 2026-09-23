@@ -34,12 +34,6 @@ mod semantic;
 #[cfg(feature = "redis")]
 mod semantic_redis;
 
-/// Re-exported so the bootstrap can build ONE policy for the whole cache
-/// subsystem without taking a direct dependency on the connection crate.
-/// Both stores here must be constructed from the same value — see
-/// [`RedisCache::connect_with`].
-#[cfg(feature = "redis")]
-pub use sibyl_gateway_redis::FailurePolicy;
 pub use cache::{Cache, CacheError, CacheOutcome};
 pub use key::{semantic_prompt_text, CacheKey};
 pub use memory::{MemoryCache, DEFAULT_CAPACITY, DEFAULT_TTL};
@@ -52,3 +46,9 @@ pub use semantic::{MemorySemanticCache, SemanticCacheStore, SemanticHit};
 pub use semantic_redis::{
     ProbeOutcome, RedisSemanticCache, DEFAULT_PREFIX as SEMANTIC_REDIS_DEFAULT_PREFIX,
 };
+/// Re-exported so the bootstrap can build ONE policy for the whole cache
+/// subsystem without taking a direct dependency on the connection crate.
+/// Both stores here must be constructed from the same value — see
+/// [`RedisCache::connect_with`].
+#[cfg(feature = "redis")]
+pub use sibyl_gateway_redis::FailurePolicy;

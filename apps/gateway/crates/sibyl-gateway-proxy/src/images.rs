@@ -10,14 +10,14 @@
 //! 7. Call `bridge.generate_image(body, ctx)` → JSON response.
 //! 8. Providers that don't support image generation return 501.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_hub::{BridgeCapability, BridgeError};
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_hub::{BridgeCapability, BridgeError};
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -680,14 +680,14 @@ pub(crate) fn emit_access_log(
 #[cfg(test)]
 mod tests {
 
+    use axum::body::to_bytes;
+    use axum::http::{Request, StatusCode};
     use sibyl_gateway_core::resource::ResourceEntry;
     use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
     use sibyl_gateway_hub::Hub;
     use sibyl_gateway_obs::UsageEvent;
     use sibyl_gateway_provider_openai::OpenAiBridge;
-    use axum::body::to_bytes;
-    use axum::http::{Request, StatusCode};
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

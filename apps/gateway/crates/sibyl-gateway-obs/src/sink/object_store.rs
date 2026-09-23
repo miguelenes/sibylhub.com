@@ -1345,10 +1345,12 @@ mod smoke {
     };
     use crate::sink::{EventBatch, IdempotencyMarker, ObservabilitySink, SinkRecord};
     use crate::usage::UsageEvent;
-    use sibyl_gateway_core::models::observability_exporter::{ObjectStoreCompression, ObjectStoreProvider};
     use futures::StreamExt;
     use object_store::path::Path as ObjectPath;
     use object_store::{ObjectStore, ObjectStoreExt};
+    use sibyl_gateway_core::models::observability_exporter::{
+        ObjectStoreCompression, ObjectStoreProvider,
+    };
     use std::sync::Arc;
 
     fn env(key: &str) -> Option<String> {
@@ -1449,7 +1451,8 @@ mod smoke {
         // LocalStack / R2 — path-style); omit it for native AWS S3
         // (virtual-hosted, region only). region defaults to us-east-1.
         let endpoint = env("SIBYL_GATEWAY_E2E_OBJSTORE_S3_ENDPOINT");
-        let region = env("SIBYL_GATEWAY_E2E_OBJSTORE_S3_REGION").unwrap_or_else(|| "us-east-1".to_string());
+        let region =
+            env("SIBYL_GATEWAY_E2E_OBJSTORE_S3_REGION").unwrap_or_else(|| "us-east-1".to_string());
         let store = build_object_store(
             ObjectStoreProvider::S3,
             &bucket,
@@ -1475,7 +1478,9 @@ mod smoke {
             env("SIBYL_GATEWAY_E2E_OBJSTORE_AZURE_ACCOUNT"),
             env("SIBYL_GATEWAY_E2E_OBJSTORE_AZURE_ACCESS_KEY"),
         ) else {
-            eprintln!("objstore_smoke_azure: SIBYL_GATEWAY_E2E_OBJSTORE_AZURE_* not set — skipping");
+            eprintln!(
+                "objstore_smoke_azure: SIBYL_GATEWAY_E2E_OBJSTORE_AZURE_* not set — skipping"
+            );
             return;
         };
         // endpoint optional: set it for the Azurite emulator
@@ -1540,8 +1545,8 @@ mod smoke {
             );
             return;
         };
-        let region =
-            env("SIBYL_GATEWAY_E2E_OBJSTORE_CLOUDID_S3_REGION").unwrap_or_else(|| "us-east-1".to_string());
+        let region = env("SIBYL_GATEWAY_E2E_OBJSTORE_CLOUDID_S3_REGION")
+            .unwrap_or_else(|| "us-east-1".to_string());
         // Keyless: no credential_ref, no static keys — the ambient AWS chain
         // (instance role / IRSA / OIDC-assumed role) is sourced by from_env.
         let store =

@@ -341,17 +341,23 @@ mod tests {
     fn only_global_pricing_takes_a_different_table_than_its_kind() {
         let s = set("/sibyl-gateway/env-1/", "/sibyl-gateway/global/");
         assert_eq!(
-            s.resolve("/sibyl-gateway/global/pricing/p-1").unwrap().table_kind(),
+            s.resolve("/sibyl-gateway/global/pricing/p-1")
+                .unwrap()
+                .table_kind(),
             "global_pricing"
         );
         // The same kind under the environment keeps its own table, which
         // is what lets an environment document override a catalog one.
         assert_eq!(
-            s.resolve("/sibyl-gateway/env-1/pricing/p-1").unwrap().table_kind(),
+            s.resolve("/sibyl-gateway/env-1/pricing/p-1")
+                .unwrap()
+                .table_kind(),
             "pricing"
         );
         assert_eq!(
-            s.resolve("/sibyl-gateway/env-1/models/m-1").unwrap().table_kind(),
+            s.resolve("/sibyl-gateway/env-1/models/m-1")
+                .unwrap()
+                .table_kind(),
             "models"
         );
     }

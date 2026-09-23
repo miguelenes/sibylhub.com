@@ -7,7 +7,7 @@
 # Usage: run-baseline.sh <sibyl-gateway-src-dir> <out-dir>
 #
 # The default grid (ttft_ms:concurrency): 0:16 0:32 0:128 10:768 — the same
-# grid as the api7/sibyl-gateway#891 A/B tables. BENCH_GRID / BENCH_REPS / the other
+# grid as the api7/aisix#891 A/B tables. BENCH_GRID / BENCH_REPS / the other
 # BENCH_* knobs in lib.sh override it, so a two-window spot-check or an extra
 # delay tier is an invocation, not a script edit. The rig floor (loadgen
 # driving the mock directly) is recorded per tier so gateway numbers can

@@ -90,7 +90,10 @@ impl SemanticRoute {
     /// The display name of the model this route dispatches to, resolved
     /// against the current configuration: `target_id` when it is set,
     /// `target` otherwise.
-    pub fn target_ref<'a>(&'a self, snapshot: &super::GatewaySnapshot) -> std::borrow::Cow<'a, str> {
+    pub fn target_ref<'a>(
+        &'a self,
+        snapshot: &super::GatewaySnapshot,
+    ) -> std::borrow::Cow<'a, str> {
         super::resolve_model_ref(snapshot, &self.target, self.target_id.as_deref())
     }
 }
@@ -226,7 +229,10 @@ impl Semantic {
     /// The display name of the model this router falls through to,
     /// resolved against the current configuration: `default_id` when it is
     /// set, `default` otherwise.
-    pub fn default_ref<'a>(&'a self, snapshot: &super::GatewaySnapshot) -> std::borrow::Cow<'a, str> {
+    pub fn default_ref<'a>(
+        &'a self,
+        snapshot: &super::GatewaySnapshot,
+    ) -> std::borrow::Cow<'a, str> {
         super::resolve_model_ref(snapshot, &self.default, self.default_id.as_deref())
     }
 

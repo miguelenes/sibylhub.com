@@ -37,10 +37,6 @@
 //! status-to-type mapping. (`/v1/chat/completions` continues to emit
 //! the OpenAI-shape envelope with its DP-stable taxonomy.)
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_obs::{
-    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, UsageEvent, UsageLabels,
-};
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
@@ -48,6 +44,10 @@ use axum::Json;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_obs::{
+    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, UsageEvent, UsageLabels,
+};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -710,11 +710,12 @@ async fn dispatch(
                 .into());
             }
         };
-        let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(
-            resolved_chain.as_ref(),
-            &chat,
-        )
-        .await;
+        let (verdict, hits) =
+            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(
+                resolved_chain.as_ref(),
+                &chat,
+            )
+            .await;
         monitor_hits_out.extend(hits);
         // Segment pass: one Bedrock call over the body's text slots;
         // an ANONYMIZE disposition writes the masked text back into
@@ -1251,7 +1252,10 @@ async fn anthropic_passthrough_dispatch(
     if let Some(r) = pk_value.request.as_ref() {
         sibyl_gateway_provider_openai::overrides::apply_param_renames(&mut body, &r.param_renames);
         if let Some(constraints) = &r.param_constraints {
-            sibyl_gateway_provider_openai::overrides::apply_param_constraints(&mut body, constraints);
+            sibyl_gateway_provider_openai::overrides::apply_param_constraints(
+                &mut body,
+                constraints,
+            );
         }
         sibyl_gateway_provider_openai::overrides::apply_default_body_fields(
             &mut body,
@@ -1267,10 +1271,15 @@ async fn anthropic_passthrough_dispatch(
         pk_id,
         "proxy/messages",
         // Every resolve_base_url_for input (#1017) via the shared constructor.
-        &crate::dispatch::pk_surface_url_fingerprint(pk_value, sibyl_gateway_core::ApiSurface::Messages),
+        &crate::dispatch::pk_surface_url_fingerprint(
+            pk_value,
+            sibyl_gateway_core::ApiSurface::Messages,
+        ),
         || {
-            let base =
-                crate::dispatch::resolve_base_url_for(pk_value, sibyl_gateway_core::ApiSurface::Messages)?;
+            let base = crate::dispatch::resolve_base_url_for(
+                pk_value,
+                sibyl_gateway_core::ApiSurface::Messages,
+            )?;
             Ok::<_, crate::error::ProxyError>(crate::dispatch::build_anthropic_url(
                 &base,
                 "/messages",
@@ -2447,11 +2456,12 @@ async fn cross_provider_dispatch(
     let mut output_seg_counts = crate::redact::RedactionCounts::new();
     let mut output_monitor_hits: Vec<sibyl_gateway_core::GuardrailMonitorHit> = Vec::new();
     if !resolved_chain.is_empty() {
-        let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
-            resolved_chain.as_ref(),
-            &resp,
-        )
-        .await;
+        let (verdict, hits) =
+            sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
+                resolved_chain.as_ref(),
+                &resp,
+            )
+            .await;
         output_monitor_hits.extend(hits);
         let verdict = crate::redact::moderate_body(
             resolved_chain.as_ref(),
@@ -3506,12 +3516,14 @@ fn update_anthropic_usage(
         // in-band `error` event, forwarded to the caller as-is.
         Some("error") => {
             let err = match json.get("error").and_then(|e| {
-                serde_json::from_value::<sibyl_gateway_provider_anthropic::wire::AnthropicStreamErrorBody>(
-                    e.clone(),
-                )
+                serde_json::from_value::<
+                    sibyl_gateway_provider_anthropic::wire::AnthropicStreamErrorBody,
+                >(e.clone())
                 .ok()
             }) {
-                Some(body) => sibyl_gateway_provider_anthropic::wire::stream_error_into_bridge_error(&body),
+                Some(body) => {
+                    sibyl_gateway_provider_anthropic::wire::stream_error_into_bridge_error(&body)
+                }
                 // An error event whose body does not parse is still one.
                 None => sibyl_gateway_hub::BridgeError::UpstreamInBand {
                     status: None,
@@ -4376,14 +4388,14 @@ mod stream_failure_tests {
 #[cfg(test)]
 mod tests {
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_anthropic::AnthropicBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
     use axum::response::Response;
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_anthropic::AnthropicBridge;
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{header, method, path};
@@ -5417,7 +5429,10 @@ data: [DONE]\n\n";
             sibyl_gateway_core::Adapter::Anthropic,
             Arc::new(AnthropicBridge::new()),
         );
-        hub.register_family(sibyl_gateway_core::Adapter::Openai, Arc::new(OpenAiBridge::new()));
+        hub.register_family(
+            sibyl_gateway_core::Adapter::Openai,
+            Arc::new(OpenAiBridge::new()),
+        );
         let handle = SnapshotHandle::new(snap);
         let app = crate::build_router(crate::ProxyState::new(handle, hub, &cfg()).without_cache());
 
@@ -5482,7 +5497,10 @@ data: [DONE]\n\n";
             sibyl_gateway_core::Adapter::Anthropic,
             Arc::new(AnthropicBridge::new()),
         );
-        hub.register_family(sibyl_gateway_core::Adapter::Openai, Arc::new(OpenAiBridge::new()));
+        hub.register_family(
+            sibyl_gateway_core::Adapter::Openai,
+            Arc::new(OpenAiBridge::new()),
+        );
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let app = crate::build_router(
             crate::ProxyState::new(SnapshotHandle::new(snap), hub, &cfg())
@@ -5539,9 +5557,9 @@ data: [DONE]\n\n";
     /// place the client can learn it.
     #[tokio::test]
     async fn messages_openai_upstream_cache_hit_streams_and_reaches_usage_event() {
+        use futures::StreamExt;
         use sibyl_gateway_obs::UsageSink;
         use sibyl_gateway_provider_openai::OpenAiBridge;
-        use futures::StreamExt;
 
         let upstream = MockServer::start().await;
         let sse = "\
@@ -5568,7 +5586,10 @@ data: [DONE]\n\n";
             sibyl_gateway_core::Adapter::Anthropic,
             Arc::new(AnthropicBridge::new()),
         );
-        hub.register_family(sibyl_gateway_core::Adapter::Openai, Arc::new(OpenAiBridge::new()));
+        hub.register_family(
+            sibyl_gateway_core::Adapter::Openai,
+            Arc::new(OpenAiBridge::new()),
+        );
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let app = crate::build_router(
             crate::ProxyState::new(SnapshotHandle::new(snap), hub, &cfg())
@@ -5639,7 +5660,10 @@ data: [DONE]\n\n";
             sibyl_gateway_core::Adapter::Anthropic,
             Arc::new(AnthropicBridge::new()),
         );
-        hub.register_family(sibyl_gateway_core::Adapter::Openai, Arc::new(OpenAiBridge::new()));
+        hub.register_family(
+            sibyl_gateway_core::Adapter::Openai,
+            Arc::new(OpenAiBridge::new()),
+        );
         let handle = SnapshotHandle::new(snap);
         let app = crate::build_router(crate::ProxyState::new(handle, hub, &cfg()).without_cache());
 
@@ -6752,15 +6776,17 @@ event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
         // one. Without this the forwarding assertion below is the same
         // observation as the no-guardrail case, and would pass just as
         // well if the row had never been indexed at all.
-        let probe =
-            sibyl_gateway_guardrails::LiveGuardrailIndex::new(SnapshotHandle::new(snap.clone()), None)
-                .resolve(&sibyl_gateway_guardrails::RequestContext {
-                    passthrough_route_id: "",
-                    model_id: "",
-                    mcp_server_id: "",
-                    api_key_id: "",
-                    team_id: None,
-                });
+        let probe = sibyl_gateway_guardrails::LiveGuardrailIndex::new(
+            SnapshotHandle::new(snap.clone()),
+            None,
+        )
+        .resolve(&sibyl_gateway_guardrails::RequestContext {
+            passthrough_route_id: "",
+            model_id: "",
+            mcp_server_id: "",
+            api_key_id: "",
+            team_id: None,
+        });
         assert!(!probe.is_empty(), "the seeded row must reach the chain");
         assert!(
             !sibyl_gateway_guardrails::Guardrail::runs_on_input(&probe),
@@ -6817,19 +6843,19 @@ event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
         // Premise: the row IS in the chain and DOES read the request; it
         // simply must not refuse. Without this, a row that never arrived
         // would forward for an entirely different reason.
-        let probe =
-            sibyl_gateway_guardrails::LiveGuardrailIndex::new(SnapshotHandle::new(snap.clone()), None)
-                .resolve(&sibyl_gateway_guardrails::RequestContext {
-                    passthrough_route_id: "",
-                    model_id: "",
-                    mcp_server_id: "",
-                    api_key_id: "",
-                    team_id: None,
-                });
+        let probe = sibyl_gateway_guardrails::LiveGuardrailIndex::new(
+            SnapshotHandle::new(snap.clone()),
+            None,
+        )
+        .resolve(&sibyl_gateway_guardrails::RequestContext {
+            passthrough_route_id: "",
+            model_id: "",
+            mcp_server_id: "",
+            api_key_id: "",
+            team_id: None,
+        });
         assert!(sibyl_gateway_guardrails::Guardrail::runs_on_input(&probe));
-        assert!(!sibyl_gateway_guardrails::Guardrail::refuses_unevaluable_input(
-            &probe
-        ));
+        assert!(!sibyl_gateway_guardrails::Guardrail::refuses_unevaluable_input(&probe));
 
         let hub = Arc::new(Hub::new());
         hub.register_specialized("anthropic", Arc::new(AnthropicBridge::new()));

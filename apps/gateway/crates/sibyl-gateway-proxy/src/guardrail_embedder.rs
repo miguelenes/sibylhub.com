@@ -24,11 +24,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use sibyl_gateway_core::snapshot::SnapshotHandle;
 use sibyl_gateway_core::{GatewaySnapshot, Model};
-use sibyl_gateway_hub::{BridgeError, Hub};
 use sibyl_gateway_guardrails::{EmbedFailure, Embedded, GuardrailEmbedder};
-use async_trait::async_trait;
+use sibyl_gateway_hub::{BridgeError, Hub};
 
 use crate::error::ProxyError;
 use crate::semantic::SemanticVectorCache;

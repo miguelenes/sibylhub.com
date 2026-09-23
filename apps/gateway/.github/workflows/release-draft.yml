@@ -48,13 +48,13 @@ jobs:
           # there is no :X.Y or :X abbreviation — and docker-image.yml moves
           # :latest for stable releases only, so a -rc draft must not advertise
           # a `latest` tag that never points at it.
-          PKG="https://github.com/orgs/api7/packages/container/package/sibyl-gateway"
+          PKG="https://github.com/orgs/sibylhub/packages/container/package/gateway"
           case "$TAG" in
             *-*)
-              ROLLING="Other image tags and the \`docker.io/api7/sibyl-gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
+              ROLLING="Other image tags and the \`docker.io/sibylhub/gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
               ;;
             *)
-              ROLLING="The rolling \`latest\` tag and the \`docker.io/api7/sibyl-gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
+              ROLLING="The rolling \`latest\` tag and the \`docker.io/sibylhub/gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
               ;;
           esac
 

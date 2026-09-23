@@ -33,7 +33,7 @@ export interface A2aReceivedRequest {
  * - `path` — under the service endpoint's own path prefix, with every other
  *   path answering `405` from a catch-all. This is the shape of any platform
  *   that multiplexes tenants under a prefix, and of a self-hosted agent behind
- *   an ingress path (api7/sibyl-gateway#913).
+ *   an ingress path (api7/aisix#913).
  */
 export type A2aCardMount = "origin" | "path";
 

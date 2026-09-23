@@ -5,10 +5,10 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sibyl_gateway_etcd::provider::ConfigProvider;
-use sibyl_gateway_etcd::EtcdConfigProvider;
 use etcd_client::Client;
 use futures::StreamExt;
+use sibyl_gateway_etcd::provider::ConfigProvider;
+use sibyl_gateway_etcd::EtcdConfigProvider;
 use tokio::time::timeout;
 
 fn etcd_url() -> Option<String> {
@@ -29,7 +29,10 @@ fn unique_prefix() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("/sibyl-gateway-etcd-it/{nanos:x}-{}-{seq}", std::process::id())
+    format!(
+        "/sibyl-gateway-etcd-it/{nanos:x}-{}-{seq}",
+        std::process::id()
+    )
 }
 
 /// The core regression test for issue #237: after `watch()` returns,

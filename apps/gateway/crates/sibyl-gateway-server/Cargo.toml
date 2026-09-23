@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
 sibyl-gateway-etcd = { path = "../sibyl-gateway-etcd" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 sibyl-gateway-obs = { path = "../sibyl-gateway-obs" }
 sibyl-gateway-proxy = { path = "../sibyl-gateway-proxy" }
 sibyl-gateway-guardrails = { path = "../sibyl-gateway-guardrails" }

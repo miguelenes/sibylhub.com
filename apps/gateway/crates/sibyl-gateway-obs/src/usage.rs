@@ -28,8 +28,10 @@
 //! (sibyl-gateway-server), not here.
 
 use crate::metrics::UsageEventLabels;
-use sibyl_gateway_core::{AppliedGuardrail, GuardrailEnforcedHit, GuardrailMonitorHit, GuardrailScore};
 use serde::Serialize;
+use sibyl_gateway_core::{
+    AppliedGuardrail, GuardrailEnforcedHit, GuardrailMonitorHit, GuardrailScore,
+};
 
 /// One usage event. Emitted at end-of-request (success / upstream error /
 /// guardrail block) per chat completion. Field shape pinned to the
@@ -153,7 +155,7 @@ pub struct UsageEvent {
     pub usage_estimated: bool,
 
     /// Audio length in seconds — the cost basis for models billed by
-    /// duration rather than tokens (AISIX-Cloud#1138, api7/sibyl-gateway#457).
+    /// duration rather than tokens (AISIX-Cloud#1138, api7/aisix#457).
     /// `whisper-1` reports `usage: {type: "duration", seconds: N}` and no
     /// token counts at all, so without this field its spend is
     /// unpriceable; cp-api multiplies it by the model's per-second rate.
@@ -999,7 +1001,7 @@ mod tests {
     /// default that is `NoSubscriber`, and a sibling test reaching
     /// `log_provider_call` on another thread would cache `Interest::never()`,
     /// leaving the capture below empty. A permissive global default removes
-    /// the outcome (api7/sibyl-gateway#909).
+    /// the outcome (api7/aisix#909).
     fn keep_callsites_enabled() {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {

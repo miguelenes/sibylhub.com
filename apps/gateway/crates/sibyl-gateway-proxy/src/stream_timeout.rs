@@ -26,9 +26,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_hub::{BridgeError, ChatChunkStream};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use sibyl_gateway_hub::{BridgeError, ChatChunkStream};
 
 /// Wrap a [`ChatChunkStream`] so each `next()` is bounded by `per_chunk`.
 /// On elapse, yield a single [`BridgeError::Timeout`] and end the stream.

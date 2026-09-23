@@ -7,7 +7,7 @@
 # the measured process itself, and leaves its pid in GW_PID. Method knobs
 # are env-overridable (BENCH_*) so a spot-check or an extra delay tier is
 # an invocation, not a script edit; every default below is exactly what
-# run-baseline.sh has always run (the api7/sibyl-gateway#891 grid).
+# run-baseline.sh has always run (the api7/aisix#891 grid).
 
 GW_CORES="0-3"; LOAD_CORES="4-9"; MOCK_CORES="10-15"
 GW_PORT=3000; MOCK_PORT=8000
@@ -350,7 +350,7 @@ run_point() { # run_point <ttft> <conc>
 
 # ---- decay leg ---------------------------------------------------------------
 
-# Post-load RSS decay (api7/sibyl-gateway#968): one saturating burst of large bodies,
+# Post-load RSS decay (api7/aisix#968): one saturating burst of large bodies,
 # then sample the idle process's memory for a fixed window. VmRSS alone cannot
 # answer "did the allocator hand the pages back" — pages released with
 # MADV_FREE stay resident until the kernel reclaims them, so a pure VmRSS

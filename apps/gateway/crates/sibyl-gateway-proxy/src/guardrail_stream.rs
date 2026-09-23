@@ -69,11 +69,12 @@ impl EosOutputScan {
             return Vec::new();
         }
         let synth = synth_chat_response(&self.upstream_model, scan_text.to_string());
-        let (verdict, mut hits) = sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
-            self.chain.as_ref(),
-            &synth,
-        )
-        .await;
+        let (verdict, mut hits) =
+            sibyl_gateway_guardrails::Guardrail::check_output_non_segment_observed(
+                self.chain.as_ref(),
+                &synth,
+            )
+            .await;
         // Segment pass (bedrock/lakera/presidio members): offer the flattened
         // text as one segment so monitor-mode segment moderators record their
         // observations too. Masks are suppressed in monitor mode, and nothing

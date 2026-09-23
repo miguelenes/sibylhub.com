@@ -39,11 +39,11 @@
 
 use std::sync::Arc;
 
-use sibyl_gateway_core::snapshot::SnapshotHandle;
-use sibyl_gateway_core::{GatewaySnapshot, ApiKey, ProxyConfig, ResourceEntry};
-use sibyl_gateway_obs::{UsageEvent, UsageSink};
 use axum::body::Body;
 use axum::http::Request;
+use sibyl_gateway_core::snapshot::SnapshotHandle;
+use sibyl_gateway_core::{ApiKey, GatewaySnapshot, ProxyConfig, ResourceEntry};
+use sibyl_gateway_obs::{UsageEvent, UsageSink};
 use tower::ServiceExt;
 
 /// The literal the guardrail row below refuses.

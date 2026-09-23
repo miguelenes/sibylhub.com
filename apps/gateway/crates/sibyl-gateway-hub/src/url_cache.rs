@@ -584,7 +584,9 @@ mod tests {
         let mut offenders = Vec::new();
         for file in files {
             let path = file.to_string_lossy().replace('\\', "/");
-            if !(path.contains("/sibyl-gateway-provider-") || path.contains("/sibyl-gateway-proxy/")) {
+            if !(path.contains("/sibyl-gateway-provider-")
+                || path.contains("/sibyl-gateway-proxy/"))
+            {
                 continue;
             }
             let src = std::fs::read_to_string(&file).expect("read source");

@@ -18,8 +18,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use sibyl_gateway_etcd::{EtcdConfigProvider, ProviderError, Supervisor};
 use etcd_client::ConnectOptions;
+use sibyl_gateway_etcd::{EtcdConfigProvider, ProviderError, Supervisor};
 
 fn auth_etcd() -> Option<(String, String, String)> {
     let url = std::env::var("ETCD_AUTH_TEST_URL").ok()?;

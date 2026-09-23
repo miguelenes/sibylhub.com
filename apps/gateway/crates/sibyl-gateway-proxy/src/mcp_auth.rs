@@ -30,14 +30,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::Once;
 
-use sibyl_gateway_core::models::{McpAuthSettings, McpServerAllowlist};
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::GatewaySnapshot;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use sibyl_gateway_core::models::{McpAuthSettings, McpServerAllowlist};
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::GatewaySnapshot;
 
 use crate::error::AuthChallenge;
 use crate::state::ProxyState;

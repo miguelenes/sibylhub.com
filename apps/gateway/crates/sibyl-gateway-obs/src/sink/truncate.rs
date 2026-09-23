@@ -180,10 +180,16 @@ fn shrink_string(s: &str, cap: usize) -> String {
         return s.to_owned();
     }
     if is_base64_data_uri(s) {
-        return format!("[sibyl-gateway: base64 data uri omitted, {} bytes]", s.len());
+        return format!(
+            "[sibyl-gateway: base64 data uri omitted, {} bytes]",
+            s.len()
+        );
     }
     let (prefix, _) = truncate_on_char_boundary(s, cap);
-    let marked = format!("{prefix}...[sibyl-gateway: truncated, {} bytes total]", s.len());
+    let marked = format!(
+        "{prefix}...[sibyl-gateway: truncated, {} bytes total]",
+        s.len()
+    );
     // A string barely over the cap can come out LONGER with the marker
     // appended; keeping the original is then strictly better.
     if marked.len() >= s.len() {
@@ -309,7 +315,10 @@ mod tests {
         assert!(cut);
         let v = assert_valid_json_within(&out, 1024);
         let url = v["image_url"]["url"].as_str().unwrap();
-        assert!(url.starts_with("[sibyl-gateway: base64 data uri omitted,"), "{url}");
+        assert!(
+            url.starts_with("[sibyl-gateway: base64 data uri omitted,"),
+            "{url}"
+        );
     }
 
     #[test]
@@ -321,7 +330,10 @@ mod tests {
         let s = serde_json::to_string(&json!({ "audio": blob })).unwrap();
         let (out, _) = truncate_content(&s, 1024);
         let v = assert_valid_json_within(&out, 1024);
-        assert!(v["audio"].as_str().unwrap().contains("[sibyl-gateway: truncated,"));
+        assert!(v["audio"]
+            .as_str()
+            .unwrap()
+            .contains("[sibyl-gateway: truncated,"));
     }
 
     #[test]

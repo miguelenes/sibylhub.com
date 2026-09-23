@@ -11,8 +11,8 @@
 //! validator wrongly rejected them even though the `RateLimit` struct and the
 //! rate limiter support them, so they now ACCEPT — the deliberate bug fix.
 
-use sibyl_gateway_core::models::schema::{unknown_field_paths, validate_model};
 use serde_json::{json, Value};
+use sibyl_gateway_core::models::schema::{unknown_field_paths, validate_model};
 
 /// Assert that the current `validate_model` ACCEPTS `value`.
 ///

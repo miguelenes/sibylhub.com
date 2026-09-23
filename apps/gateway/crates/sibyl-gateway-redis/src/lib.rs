@@ -91,7 +91,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::{RedisConnConfig, RedisMode};
 use redis::aio::{
     ConnectionLike, ConnectionManager, ConnectionManagerConfig, MultiplexedConnection,
 };
@@ -99,6 +98,7 @@ use redis::cluster::ClusterClient;
 use redis::cluster_async::ClusterConnection;
 use redis::sentinel::{SentinelClient, SentinelNodeConnectionInfo, SentinelServerType};
 use redis::{AsyncConnectionConfig, IntoConnectionInfo, RedisResult};
+use sibyl_gateway_core::{RedisConnConfig, RedisMode};
 use tokio::sync::Mutex;
 
 /// How long commands short-circuit after a connectivity failure. Fixed,

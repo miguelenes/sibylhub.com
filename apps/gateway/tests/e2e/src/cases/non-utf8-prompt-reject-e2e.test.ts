@@ -12,7 +12,7 @@ import {
 } from "../harness/index.js";
 
 // E2E: non-UTF-8 `prompt` multipart fields are rejected 400 on every
-// multipart surface (api7/sibyl-gateway#1016).
+// multipart surface (api7/aisix#1016).
 //
 // The input-guardrail scan and mask passes read `prompt` as UTF-8 and
 // used to SKIP a field that failed to decode, while the rebuilt form

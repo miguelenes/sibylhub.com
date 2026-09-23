@@ -63,14 +63,14 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::models::model::Adapter;
-use sibyl_gateway_obs::{AccessLog, UsageEvent};
 use axum::extract::ws::{CloseFrame, Message as AxMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use serde_json::Value;
+use sibyl_gateway_core::models::model::Adapter;
+use sibyl_gateway_obs::{AccessLog, UsageEvent};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as TgMessage;
 
@@ -194,8 +194,9 @@ async fn connect_upstream_within(
     budget: Option<Duration>,
     request: tokio_tungstenite::tungstenite::handshake::client::Request,
 ) -> UpstreamDial {
-    let connector =
-        tokio_tungstenite::Connector::Rustls(sibyl_gateway_hub::upstream_tls::rustls_client_config());
+    let connector = tokio_tungstenite::Connector::Rustls(
+        sibyl_gateway_hub::upstream_tls::rustls_client_config(),
+    );
     let dial =
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     let Some(budget) = budget else {
@@ -1299,12 +1300,12 @@ mod tests {
         );
     }
     use super::*;
+    use futures::{SinkExt, StreamExt};
     use sibyl_gateway_core::resource::ResourceEntry;
     use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
     use sibyl_gateway_hub::Hub;
     use sibyl_gateway_obs::{UsageEvent as ObsUsageEvent, UsageSink};
-    use futures::{SinkExt, StreamExt};
     use std::sync::{Arc, Mutex};
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 

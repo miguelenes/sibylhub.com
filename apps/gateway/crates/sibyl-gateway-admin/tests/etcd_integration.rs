@@ -28,13 +28,13 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sibyl_gateway_admin::{build_router, AdminState, ConfigStore, EtcdConfigStore};
-use sibyl_gateway_core::snapshot::SnapshotHandle;
-use sibyl_gateway_core::{AdminConfig, GatewaySnapshot};
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use etcd_client::{DeleteOptions, Txn, TxnOp};
 use serde_json::{json, Value};
+use sibyl_gateway_admin::{build_router, AdminState, ConfigStore, EtcdConfigStore};
+use sibyl_gateway_core::snapshot::SnapshotHandle;
+use sibyl_gateway_core::{AdminConfig, GatewaySnapshot};
 use tower::ServiceExt;
 
 const ADMIN_KEY: &str = "admin-it-secret";
@@ -577,8 +577,10 @@ async fn loader_picks_up_every_direct_write() {
         })
         .collect();
 
-    let (snap, stats) =
-        sibyl_gateway_etcd::build_snapshot(&sibyl_gateway_etcd::PrefixSet::single(&prefix), &raw_entries);
+    let (snap, stats) = sibyl_gateway_etcd::build_snapshot(
+        &sibyl_gateway_etcd::PrefixSet::single(&prefix),
+        &raw_entries,
+    );
     assert_eq!(
         stats.schema_rejected, 0,
         "loader rejected a canonical document: {stats:?}"
@@ -618,7 +620,7 @@ async fn loader_picks_up_every_direct_write() {
 ///
 /// Bracketed by `ETCD_AUTH_TTL_TEST_URL`, the short-TTL authenticated
 /// cluster `.github/workflows/ci.yml` starts (the container and the
-/// short-TTL approach come from community PR api7/sibyl-gateway#763, `okaybase`);
+/// short-TTL approach come from community PR api7/aisix#763, `okaybase`);
 /// no-ops when it is unset, like every other integration test here.
 #[tokio::test]
 async fn admin_reads_survive_a_token_the_server_forgets() {

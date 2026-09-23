@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use arc_swap::ArcSwapOption;
 use sibyl_gateway_core::{
     models::{
         ConditionInput, ConditionLogic, ConditionNode, ConditionOperator, ConditionValue,
@@ -8,7 +9,6 @@ use sibyl_gateway_core::{
     resource::ResourceEntry,
     snapshot::ResourceTable,
 };
-use arc_swap::ArcSwapOption;
 
 type Entry = Arc<ResourceEntry<RateLimitPolicy>>;
 

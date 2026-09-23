@@ -28,11 +28,11 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::{A2aAgent, A2aAuthType, A2aProtocolVersion};
 use async_trait::async_trait;
 use futures::StreamExt;
 use http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_core::{A2aAgent, A2aAuthType, A2aProtocolVersion};
 
 use crate::error::A2aError;
 

@@ -376,7 +376,8 @@ impl ManagedConfig {
         }
     }
 
-    pub const DEFAULT_SNAPSHOT_CACHE_PATH: &'static str = "/var/lib/sibyl-gateway/config_cache.json";
+    pub const DEFAULT_SNAPSHOT_CACHE_PATH: &'static str =
+        "/var/lib/sibyl-gateway/config_cache.json";
 
     fn default_mtls_dir() -> String {
         "/var/lib/sibyl-gateway/mtls".into()
@@ -1090,11 +1091,14 @@ pub struct RequestIdConfig {
     /// acceptable value wins. An unacceptable or absent value falls back
     /// to a freshly minted UUID, which is the pre-#1288 behaviour.
     ///
-    /// Defaults to the gateway's own `x-sibylhub-request-id` alone. Add
-    /// `x-request-id` to honour the de-facto standard header — deliberately
-    /// NOT a default, because every reverse proxy and ingress in front of
-    /// the gateway stamps that header automatically, so enabling it makes
-    /// the correlation id come from the infrastructure rather than from the
+    /// Defaults to the gateway's own `x-sibylhub-request-id` followed by
+    /// the legacy `x-aisix-request-id`, so a pre-rebrand client keeps its
+    /// correlation id working; the legacy name is a compatibility alias
+    /// only and appears nowhere in responses. Add `x-request-id` to
+    /// honour the de-facto standard header — deliberately NOT a default,
+    /// because every reverse proxy and ingress in front of the gateway
+    /// stamps that header automatically, so enabling it makes the
+    /// correlation id come from the infrastructure rather than from the
     /// caller unless the operator meant it to. Set to `[]` to refuse
     /// caller-supplied ids entirely and always mint a UUID.
     pub accept_headers: Vec<String>,
@@ -1103,7 +1107,7 @@ pub struct RequestIdConfig {
 impl Default for RequestIdConfig {
     fn default() -> Self {
         Self {
-            accept_headers: vec!["x-sibylhub-request-id".into()],
+            accept_headers: vec!["x-sibylhub-request-id".into(), "x-aisix-request-id".into()],
         }
     }
 }
@@ -2551,6 +2555,46 @@ admin:
     }
 
     #[test]
+    fn legacy_env_prefix_applies_only_when_new_prefix_is_absent() {
+        let vars = [
+            ("AISIX_PROXY__ADDR".to_string(), "127.0.0.1:1".to_string()),
+            ("SIBYL_GATEWAY_PROXY__WORKERS".to_string(), "4".to_string()),
+            ("AISIX_PROXY__WORKERS".to_string(), "9".to_string()),
+            ("AISIX_BOGUS".to_string(), "x".to_string()),
+            ("UNRELATED".to_string(), "y".to_string()),
+        ];
+        let overrides = EnvOverrides::partition(vars.into_iter());
+        // A legacy variable is applied under its new name...
+        assert_eq!(
+            overrides
+                .source
+                .get("SIBYL_GATEWAY_PROXY__ADDR")
+                .map(String::as_str),
+            Some("127.0.0.1:1"),
+        );
+        // ...unless the same setting was also given under the new prefix,
+        // which wins silently.
+        assert_eq!(
+            overrides
+                .source
+                .get("SIBYL_GATEWAY_PROXY__WORKERS")
+                .map(String::as_str),
+            Some("4"),
+        );
+        // Every applied legacy variable is reported, and exactly once —
+        // the new-prefix winner must not double-report.
+        assert_eq!(overrides.legacy.len(), 1);
+        assert!(overrides.legacy[0].contains("AISIX_PROXY__ADDR"));
+        assert!(overrides.legacy[0].contains("SIBYL_GATEWAY_PROXY__ADDR"));
+        // A legacy variable that names no setting is reported as ignored,
+        // with the legacy spelling called out.
+        assert!(overrides
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("AISIX_BOGUS ") && w.contains("AISIX_<SECTION>__<KEY>")),);
+    }
+
+    #[test]
     fn a_nested_unknown_env_var_still_aborts_startup() {
         // The filter drops only names that cannot be settings. An operator
         // who spelled out a section meant a setting, so their typo still
@@ -2582,7 +2626,10 @@ admin:
         // starting from its own documented environment variable at all.
         const OWN: [(&str, &str); 3] = [
             ("SIBYL_GATEWAY_CONFIG", "/etc/sibyl-gateway/config.yaml"),
-            ("SIBYL_GATEWAY_CONFIG_PATH", "/etc/sibyl-gateway/config.managed.yaml"),
+            (
+                "SIBYL_GATEWAY_CONFIG_PATH",
+                "/etc/sibyl-gateway/config.managed.yaml",
+            ),
             ("SIBYL_GATEWAY_DP_BUDGET_STALE_MAX_SECONDS", "30"),
         ];
         if !in_child_with_env(
@@ -2613,7 +2660,10 @@ admin:
         if !in_child_with_env(
             "a_flat_top_level_env_var_still_overrides_the_file",
             "TEST_ENV_FLAT_TOP_LEVEL_CHILD",
-            &[("SIBYL_GATEWAY_BEDROCK_ENDPOINT_URL", "http://localstack:4566")],
+            &[(
+                "SIBYL_GATEWAY_BEDROCK_ENDPOINT_URL",
+                "http://localstack:4566",
+            )],
         ) {
             return;
         }
@@ -2705,7 +2755,10 @@ admin:
         let overrides = EnvOverrides::partition(
             [
                 ("sibyl_gateway_proxy__addr", "127.0.0.1:1"),
-                ("Aisix_Bedrock_Endpoint_Url", "http://localhost:4566"),
+                (
+                    "Sibyl_Gateway_Bedrock_Endpoint_Url",
+                    "http://localhost:4566",
+                ),
                 ("PATH", "/usr/bin"),
                 ("SIBYL_GATEWAY_OSS_SERVICE_HOST", "10.96.0.12"),
             ]
@@ -2714,7 +2767,13 @@ admin:
         );
         let mut kept: Vec<&str> = overrides.source.keys().map(String::as_str).collect();
         kept.sort_unstable();
-        assert_eq!(kept, ["Aisix_Bedrock_Endpoint_Url", "sibyl_gateway_proxy__addr"]);
+        assert_eq!(
+            kept,
+            [
+                "Sibyl_Gateway_Bedrock_Endpoint_Url",
+                "sibyl_gateway_proxy__addr"
+            ]
+        );
         assert_eq!(overrides.warnings.len(), 1);
         assert!(overrides.warnings[0].starts_with("SIBYL_GATEWAY_OSS_SERVICE_HOST "));
     }
@@ -2926,10 +2985,13 @@ admin:
     }
 
     #[test]
-    fn request_id_accept_headers_default_to_the_gateway_header_only() {
-        // The default is the contract from AISIX-Cloud#1288: a caller can
-        // reuse an id through OUR header, and `x-request-id` — which every
-        // ingress in front of the gateway stamps — stays opt-in.
+    fn request_id_accept_headers_default_to_the_gateway_header_plus_legacy_alias() {
+        // The default is the contract from AISIX-Cloud#1288, extended by
+        // the SibylHub rebrand: a caller can reuse an id through OUR
+        // header, the legacy `x-aisix-request-id` stays accepted so a
+        // pre-rebrand client keeps its correlation id, and `x-request-id`
+        // — which every ingress in front of the gateway stamps — stays
+        // opt-in.
         let f = write_yaml(
             r#"
 etcd:
@@ -2945,7 +3007,7 @@ admin:
         let cfg = Config::load_from_path(Some(f.path())).unwrap();
         assert_eq!(
             cfg.proxy.request_id.accept_headers,
-            vec!["x-sibylhub-request-id"]
+            vec!["x-sibylhub-request-id", "x-aisix-request-id"]
         );
         assert_eq!(
             cfg.proxy
@@ -2955,7 +3017,7 @@ admin:
                 .iter()
                 .map(|h| h.as_str().to_string())
                 .collect::<Vec<_>>(),
-            vec!["x-sibylhub-request-id"],
+            vec!["x-sibylhub-request-id", "x-aisix-request-id"],
         );
     }
 
@@ -2979,8 +3041,9 @@ admin:
 
         // Opting `x-request-id` in, and header names normalised to lower
         // case so the lookup matches however the caller cased it.
-        let f =
-            with("  request_id:\n    accept_headers: [\"X-Aisix-Request-Id\", \"x-request-id\"]\n");
+        let f = with(
+            "  request_id:\n    accept_headers: [\"X-Sibylhub-Request-Id\", \"x-request-id\"]\n",
+        );
         let cfg = Config::load_from_path(Some(f.path())).unwrap();
         assert_eq!(
             cfg.proxy
@@ -3771,7 +3834,10 @@ admin:
         );
         assert_eq!(
             cfg.proxy.request_id.accept_headers,
-            vec!["x-sibylhub-request-id".to_string(), "x-request-id".to_string()],
+            vec![
+                "x-sibylhub-request-id".to_string(),
+                "x-request-id".to_string()
+            ],
         );
         assert_eq!(cfg.proxy.url_rewrites.len(), 1);
         assert_eq!(cfg.proxy.listeners.len(), 2);
@@ -5111,4 +5177,3 @@ admin:
         assert!(err.contains("proxy.workers"), "unexpected error: {err}");
     }
 }
-   

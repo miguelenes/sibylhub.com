@@ -41,10 +41,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{AzureContentSafetyTextModerationConfig, GuardrailHookPoint};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse, Role};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_core::models::{AzureContentSafetyTextModerationConfig, GuardrailHookPoint};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse, Role};
 
 use crate::chunk::chunk_text;
 use crate::{Guardrail, GuardrailVerdict, StreamOutputPolicy};
@@ -415,9 +415,9 @@ impl Guardrail for TextModerationGuardrail {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use sibyl_gateway_core::models::AzureContentSafetyTextModerationConfig;
     use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
-    use serde_json::json;
     use wiremock::matchers::{body_partial_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

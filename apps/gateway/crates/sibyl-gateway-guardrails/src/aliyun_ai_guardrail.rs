@@ -58,10 +58,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{AliyunAiGuardrailConfig, GuardrailHookPoint};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use serde::Deserialize;
+use sibyl_gateway_core::models::{AliyunAiGuardrailConfig, GuardrailHookPoint};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::aliyun::{
     extract_error_code, percent_encode, sign, AliyunFailure, ACS_REQUEST_ID_HEADER,
@@ -1054,8 +1054,8 @@ fn collect_input_text(req: &ChatFormat) -> String {
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
     use serde_json::json;
+    use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

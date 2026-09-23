@@ -51,7 +51,9 @@ pub(crate) type GuardrailAudit = Option<Arc<sibyl_gateway_guardrails::GuardrailA
 /// incidental: the retrying families call this from emitters that also
 /// serve superseded attempts, and a destructive read would leave whichever
 /// event happened to go out first holding the only copy.
-pub(crate) fn enforced_hits(audit: &GuardrailAudit) -> Vec<sibyl_gateway_core::GuardrailEnforcedHit> {
+pub(crate) fn enforced_hits(
+    audit: &GuardrailAudit,
+) -> Vec<sibyl_gateway_core::GuardrailEnforcedHit> {
     audit.as_ref().map(|a| a.snapshot()).unwrap_or_default()
 }
 
@@ -969,7 +971,10 @@ mod tests {
             // AISIX-Cloud#1403: same fallback, same reason — a request
             // that reached no key reached no protocol either.
             assert_eq!(pk.labels().protocol, "unknown");
-            assert_eq!(pk.telemetry_tags(), sibyl_gateway_core::TelemetryTags::default());
+            assert_eq!(
+                pk.telemetry_tags(),
+                sibyl_gateway_core::TelemetryTags::default()
+            );
         }
         assert_eq!(PkLabels::default().id, "unknown");
         assert_eq!(PkLabels::default().name, "unknown");

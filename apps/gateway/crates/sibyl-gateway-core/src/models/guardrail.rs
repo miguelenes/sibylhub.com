@@ -929,7 +929,7 @@ fn default_semantic_text_source() -> String {
 /// replacement for each slot in `ctx.segments`; where the call site cannot
 /// substitute text back, a rewrite request blocks instead of releasing the
 /// original. Scripts also get signing primitives (`crypto`) and access to
-/// the environment's embedding model (`sibyl-gateway.embed`), so a script can
+/// the environment's embedding model (`sibylhub.embed`), so a script can
 /// express what the built-in kinds express. Applies on input, output, or
 /// both, including streamed output.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, PartialEq)]
@@ -948,7 +948,7 @@ pub struct CustomConfig {
     /// schema — `minLength` counts characters, so a whitespace-only value is
     /// non-empty — and is refused when the chain is built instead. `sibyl-gateway
     /// validate` reports that and exits non-zero; a serving gateway reports
-    /// the runtime rejection through config status (api7/sibyl-gateway#1084).
+    /// the runtime rejection through config status (api7/aisix#1084).
     #[serde(default)]
     #[schemars(length(min = 1))]
     pub script: String,

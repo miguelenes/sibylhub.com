@@ -1896,7 +1896,7 @@ pub fn guardrail_root_schema(strict: bool) -> Value {
                     // `fail_open` defaults to false — fail-closed beats the
                     // row vanishing and letting the traffic through
                     // unscreened. It costs the `rejected[]` signal, which
-                    // api7/sibyl-gateway#1084 tracks. A scriptless `custom` row screens nothing
+                    // api7/aisix#1084 tracks. A scriptless `custom` row screens nothing
                     // either way, so relaxing it changes no enforcement and
                     // rejects it into `/status/config`'s `rejected[]` at load
                     // time. Only a MISSING key is caught here; a

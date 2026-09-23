@@ -11,7 +11,7 @@ description = "sibyl-gateway: AWS Bedrock runtime provider bridge (skeleton — 
 [dependencies]
 tracing.workspace = true
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway", features = ["aws"] }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub", features = ["aws"] }
 # Reuse Anthropic Messages request/response wire types for the
 # `anthropic.*` Bedrock publisher (Claude on Bedrock) non-stream
 # /invoke path. The body shape is the Anthropic Messages API minus

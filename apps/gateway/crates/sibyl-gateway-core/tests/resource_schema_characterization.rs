@@ -7,12 +7,12 @@
 //! One table per resource; the label is printed on failure so the offending
 //! case is obvious. New resources append their own table as they migrate.
 
+use serde_json::{json, Value};
 use sibyl_gateway_core::models::schema::{
     resource_root_schema, unknown_field_paths, validate_apikey, validate_cache_policy,
     validate_guardrail, validate_guardrail_attachment, validate_observability_exporter,
     validate_provider_key, validate_rate_limit_policy, RESOURCES,
 };
-use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 

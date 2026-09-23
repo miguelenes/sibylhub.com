@@ -12,7 +12,6 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use sibyl_gateway_mcp::{EphemeralBridge, McpBridge, McpUpstream, OAuthClientConfig, RmcpBridge};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -21,6 +20,7 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
+use sibyl_gateway_mcp::{EphemeralBridge, McpBridge, McpUpstream, OAuthClientConfig, RmcpBridge};
 
 /// A minimal real MCP server exposing one tool, `echo`, that returns its
 /// `text` argument back as a text content block.

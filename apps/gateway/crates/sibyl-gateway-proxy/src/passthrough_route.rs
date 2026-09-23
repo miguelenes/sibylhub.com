@@ -62,12 +62,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_obs::AccessLog;
 use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use sibyl_gateway_obs::AccessLog;
 
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::{PassthroughAuthMode, PassthroughCredentialMode, PassthroughRoute};
@@ -730,8 +730,11 @@ async fn dispatch(
         route.identity_header.as_deref().unwrap_or_default(),
     ];
     let forwards = |name: &str| {
-        sibyl_gateway_core::forward_pattern_admits_with(&route.forward_client_headers, name, &route_slots)
-            && !sibyl_gateway_core::header_forward_blocked(name)
+        sibyl_gateway_core::forward_pattern_admits_with(
+            &route.forward_client_headers,
+            name,
+            &route_slots,
+        ) && !sibyl_gateway_core::header_forward_blocked(name)
             && name != "content-length"
     };
 
@@ -928,7 +931,9 @@ async fn dispatch(
     let resp_body = read.map_err(|e| {
         telemetry.emitted = true;
         RouteError::of(
-            ProxyError::Bridge(sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())),
+            ProxyError::Bridge(sibyl_gateway_hub::BridgeError::UpstreamDecode(
+                e.to_string(),
+            )),
             &auth,
         )
     })?;
@@ -944,7 +949,8 @@ async fn dispatch(
             usage: sibyl_gateway_hub::UsageStats::default(),
         };
         let (verdict, hits) =
-            sibyl_gateway_guardrails::Guardrail::check_output_observed(&resolved_chain, &synth).await;
+            sibyl_gateway_guardrails::Guardrail::check_output_observed(&resolved_chain, &synth)
+                .await;
         telemetry.monitor_hits.extend(hits);
         if let sibyl_gateway_guardrails::GuardrailVerdict::Block {
             reason,
@@ -1699,16 +1705,21 @@ fn frame_in_band_error(
             if value.get("type").and_then(|t| t.as_str()) == Some("error") {
                 if let Some(body) = value.get("error").and_then(|e| {
                     serde_json::from_value::<
-                            sibyl_gateway_provider_anthropic::wire::AnthropicStreamErrorBody,
-                        >(e.clone())
-                        .ok()
+                        sibyl_gateway_provider_anthropic::wire::AnthropicStreamErrorBody,
+                    >(e.clone())
+                    .ok()
                 }) {
                     return Some(
-                        sibyl_gateway_provider_anthropic::wire::stream_error_into_bridge_error(&body),
+                        sibyl_gateway_provider_anthropic::wire::stream_error_into_bridge_error(
+                            &body,
+                        ),
                     );
                 }
             }
-            sibyl_gateway_hub::capture_in_band_error(payload, sibyl_gateway_hub::UpstreamWire::OpenAI)
+            sibyl_gateway_hub::capture_in_band_error(
+                payload,
+                sibyl_gateway_hub::UpstreamWire::OpenAI,
+            )
         }
     }
 }
@@ -1857,8 +1868,8 @@ fn stream_response(
     mut telemetry: RouteTelemetry,
     request_id: &str,
 ) -> Response {
-    use sibyl_gateway_guardrails::{Guardrail as _, GuardrailVerdict, StreamOutputPolicy};
     use futures::StreamExt;
+    use sibyl_gateway_guardrails::{Guardrail as _, GuardrailVerdict, StreamOutputPolicy};
 
     let policy = if chain.is_empty() {
         StreamOutputPolicy::EndOfStreamCheck
@@ -2509,12 +2520,12 @@ fn emit_access_log(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, ProviderKey, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, ProviderKey, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{method as wm_method, path as wm_path};

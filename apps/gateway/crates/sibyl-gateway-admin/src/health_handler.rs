@@ -233,12 +233,18 @@ mod tests {
     #[test]
     fn tracker_level_reflects_failures() {
         let t = make_tracker();
-        assert_eq!(t.level("m"), sibyl_gateway_proxy::health::HealthLevel::Healthy);
+        assert_eq!(
+            t.level("m"),
+            sibyl_gateway_proxy::health::HealthLevel::Healthy
+        );
         // 4 failures → degraded
         for _ in 0..4 {
             t.record_failure("m");
         }
-        assert_eq!(t.level("m"), sibyl_gateway_proxy::health::HealthLevel::Degraded);
+        assert_eq!(
+            t.level("m"),
+            sibyl_gateway_proxy::health::HealthLevel::Degraded
+        );
         // 8+ → down
         for _ in 0..4 {
             t.record_failure("m");
@@ -246,7 +252,10 @@ mod tests {
         assert_eq!(t.level("m"), sibyl_gateway_proxy::health::HealthLevel::Down);
         // success resets
         t.record_success("m");
-        assert_eq!(t.level("m"), sibyl_gateway_proxy::health::HealthLevel::Healthy);
+        assert_eq!(
+            t.level("m"),
+            sibyl_gateway_proxy::health::HealthLevel::Healthy
+        );
     }
 
     fn mh(health: u8) -> super::ModelHealth {

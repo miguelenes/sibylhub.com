@@ -6,8 +6,8 @@
 //! same source the provider bridges use — this client talks to the same
 //! upstreams, so it must expire pooled connections on the same schedule.
 
-use sibyl_gateway_core::models::provider_key::UpstreamConnection;
 use reqwest::Client;
+use sibyl_gateway_core::models::provider_key::UpstreamConnection;
 use std::sync::OnceLock;
 
 /// Returns the process-wide shared HTTP client.

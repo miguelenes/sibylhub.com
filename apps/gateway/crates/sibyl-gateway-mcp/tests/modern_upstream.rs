@@ -21,12 +21,12 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use axum::extract::State;
+use axum::response::IntoResponse;
 use sibyl_gateway_mcp::{
     streamable_http_service, EphemeralBridge, McpBridge, McpGateway, McpProtocol, McpUpstream,
     RmcpBridge,
 };
-use axum::extract::State;
-use axum::response::IntoResponse;
 
 /// Which generation the stub upstream speaks.
 #[derive(Clone, Copy, PartialEq)]
@@ -380,7 +380,11 @@ async fn snapshot_row_with_protocol_version_reaches_modern_only_upstream() {
     let snapshot = sibyl_gateway_core::GatewaySnapshot::new();
     snapshot
         .mcp_servers
-        .insert(sibyl_gateway_core::ResourceEntry::new("mcp-modern", server, 1));
+        .insert(sibyl_gateway_core::ResourceEntry::new(
+            "mcp-modern",
+            server,
+            1,
+        ));
     let gateway = McpGateway::from_snapshot_scoped(&snapshot, "modern")
         .expect("scoped gateway over the registered row");
     let app = axum::Router::new().nest_service("/mcp", streamable_http_service(gateway, 0));

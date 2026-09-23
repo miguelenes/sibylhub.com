@@ -46,9 +46,9 @@ mod semantic;
 mod text_moderation;
 mod too_large;
 
+use async_trait::async_trait;
 use sibyl_gateway_core::models::GuardrailMonitorHit;
 use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, Role};
-use async_trait::async_trait;
 
 /// Max bytes of an upstream guardrail-provider error body to echo into a log
 /// line. Mirrors nginx's single-error-line cap (`NGX_MAX_ERROR_STR` = 2048) so

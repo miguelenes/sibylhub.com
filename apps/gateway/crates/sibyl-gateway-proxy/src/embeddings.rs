@@ -14,14 +14,14 @@
 //! Providers that don't implement embeddings return a 501 with
 //! `"type": "not_implemented"`.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_hub::{BridgeCapability, BridgeError, ChatFormat, ChatMessage, EmbeddingRequest};
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_hub::{BridgeCapability, BridgeError, ChatFormat, ChatMessage, EmbeddingRequest};
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -391,7 +391,8 @@ async fn dispatch(
     if sibyl_gateway_guardrails::Guardrail::redacts_input(&resolved_chain) {
         match &mut body.input {
             InputField::Single(s) => {
-                if let Some(r) = sibyl_gateway_guardrails::Guardrail::redact_input_text(&resolved_chain, s)
+                if let Some(r) =
+                    sibyl_gateway_guardrails::Guardrail::redact_input_text(&resolved_chain, s)
                 {
                     *s = r.text;
                     crate::redact::merge_counts(&mut redactions, r.counts);
@@ -777,13 +778,13 @@ fn emit_usage_event(
 #[cfg(test)]
 mod tests {
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

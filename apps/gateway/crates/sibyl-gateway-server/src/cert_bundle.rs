@@ -32,8 +32,8 @@
 
 use std::path::{Path, PathBuf};
 
-use sibyl_gateway_core::ManagedConfig;
 use anyhow::{anyhow, bail, Context};
+use sibyl_gateway_core::ManagedConfig;
 use x509_parser::extensions::GeneralName;
 use x509_parser::pem::parse_x509_pem;
 use x509_parser::prelude::{FromDer, X509Certificate};
@@ -232,7 +232,11 @@ mod tests {
         params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         params.key_identifier_method = KeyIdMethod::Sha256;
         params.subject_alt_names = vec![
-            SanType::URI(format!("x-sibyl-gateway://env/{env_id}").try_into().unwrap()),
+            SanType::URI(
+                format!("x-sibyl-gateway://env/{env_id}")
+                    .try_into()
+                    .unwrap(),
+            ),
             SanType::URI(format!("x-sibyl-gateway://dp/{dp_id}").try_into().unwrap()),
         ];
         let key = KeyPair::generate().unwrap();

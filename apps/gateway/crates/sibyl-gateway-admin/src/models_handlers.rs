@@ -3,10 +3,10 @@
 //! as JSON. Models are written declaratively (resources file or etcd),
 //! not through this surface.
 
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::Model;
 use axum::extract::{Path, State};
 use axum::Json;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::Model;
 
 use crate::auth::AdminAuth;
 use crate::error::AdminError;

@@ -27,11 +27,11 @@
 //! [`OpenAiBridge`](crate::OpenAiBridge) only until a sibling crate
 //! needs them.
 
+use serde::{Deserialize, Serialize};
 use sibyl_gateway_hub::{
     ChatChunk, ChatDelta, ChatFormat, ChatMessage, ChatResponse, EmbeddingObject, EmbeddingRequest,
     EmbeddingResponse, EmbeddingUsage, EmbeddingVector, FinishReason, Role, UsageStats,
 };
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenAiRequest<'a> {

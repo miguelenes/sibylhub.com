@@ -61,13 +61,13 @@
 //!   user-facing passthrough and hit the identical "route missing from
 //!   the list" bug.
 
-use sibyl_gateway_obs::AccessLog;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::Response;
 use axum::Json;
 use serde_json::Value;
+use sibyl_gateway_obs::AccessLog;
 use std::time::{Duration, Instant};
 
 use crate::auth::AuthenticatedKey;
@@ -637,7 +637,10 @@ async fn count_tokens_to_target(
     if let Some(r) = pk_entry.value.request.as_ref() {
         sibyl_gateway_provider_openai::overrides::apply_param_renames(&mut body, &r.param_renames);
         if let Some(constraints) = &r.param_constraints {
-            sibyl_gateway_provider_openai::overrides::apply_param_constraints(&mut body, constraints);
+            sibyl_gateway_provider_openai::overrides::apply_param_constraints(
+                &mut body,
+                constraints,
+            );
         }
         sibyl_gateway_provider_openai::overrides::apply_default_body_fields(
             &mut body,
@@ -927,12 +930,12 @@ fn emit_access_log(
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{header, method, path};
@@ -1125,15 +1128,17 @@ mod tests {
         // one. Without this the forwarding assertion below is the same
         // observation as the no-guardrail case, and would pass just as
         // well if the row had never been indexed at all.
-        let probe =
-            sibyl_gateway_guardrails::LiveGuardrailIndex::new(SnapshotHandle::new(snap.clone()), None)
-                .resolve(&sibyl_gateway_guardrails::RequestContext {
-                    passthrough_route_id: "",
-                    model_id: "",
-                    mcp_server_id: "",
-                    api_key_id: "",
-                    team_id: None,
-                });
+        let probe = sibyl_gateway_guardrails::LiveGuardrailIndex::new(
+            SnapshotHandle::new(snap.clone()),
+            None,
+        )
+        .resolve(&sibyl_gateway_guardrails::RequestContext {
+            passthrough_route_id: "",
+            model_id: "",
+            mcp_server_id: "",
+            api_key_id: "",
+            team_id: None,
+        });
         assert!(!probe.is_empty(), "the seeded row must reach the chain");
         assert!(
             !sibyl_gateway_guardrails::Guardrail::runs_on_input(&probe),
@@ -1188,19 +1193,19 @@ mod tests {
         // Premise: the row IS in the chain and DOES read the request; it
         // simply must not refuse. Without this, a row that never arrived
         // would forward for an entirely different reason.
-        let probe =
-            sibyl_gateway_guardrails::LiveGuardrailIndex::new(SnapshotHandle::new(snap.clone()), None)
-                .resolve(&sibyl_gateway_guardrails::RequestContext {
-                    passthrough_route_id: "",
-                    model_id: "",
-                    mcp_server_id: "",
-                    api_key_id: "",
-                    team_id: None,
-                });
+        let probe = sibyl_gateway_guardrails::LiveGuardrailIndex::new(
+            SnapshotHandle::new(snap.clone()),
+            None,
+        )
+        .resolve(&sibyl_gateway_guardrails::RequestContext {
+            passthrough_route_id: "",
+            model_id: "",
+            mcp_server_id: "",
+            api_key_id: "",
+            team_id: None,
+        });
         assert!(sibyl_gateway_guardrails::Guardrail::runs_on_input(&probe));
-        assert!(!sibyl_gateway_guardrails::Guardrail::refuses_unevaluable_input(
-            &probe
-        ));
+        assert!(!sibyl_gateway_guardrails::Guardrail::refuses_unevaluable_input(&probe));
 
         let hub = Arc::new(Hub::new());
         hub.register_specialized(

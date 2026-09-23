@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
+use serde_json::{json, Value};
 use sibyl_gateway_core::{EffortAction, MappedEffort, Model};
 use sibyl_gateway_hub::ChatFormat;
-use serde_json::{json, Value};
 
 /// How one request's effort carrier field reads to the mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,8 +181,8 @@ fn json_request<'a>(
 mod tests {
     use std::borrow::Cow;
 
-    use sibyl_gateway_hub::{ChatFormat, ChatMessage};
     use serde_json::json;
+    use sibyl_gateway_hub::{ChatFormat, ChatMessage};
 
     use super::*;
 

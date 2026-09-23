@@ -856,13 +856,14 @@ mod tests {
     /// client and not to the request.
     #[test]
     fn resolve_addresses_alone_build_a_dedicated_client() {
-        let key: sibyl_gateway_core::models::ProviderKey = serde_json::from_value(serde_json::json!({
-            "display_name": "pk-alone",
-            "api_key": "sk-x",
-            "api_base": "https://vendor-alone.invalid/v1",
-            "resolve_addresses": ["192.0.2.10", "192.0.2.11"],
-        }))
-        .unwrap();
+        let key: sibyl_gateway_core::models::ProviderKey =
+            serde_json::from_value(serde_json::json!({
+                "display_name": "pk-alone",
+                "api_key": "sk-x",
+                "api_base": "https://vendor-alone.invalid/v1",
+                "resolve_addresses": ["192.0.2.10", "192.0.2.11"],
+            }))
+            .unwrap();
         let conn = key.upstream_connection().expect("an override is set");
         assert_eq!(conn.tls, None);
         assert_eq!(

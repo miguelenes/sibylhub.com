@@ -27,8 +27,8 @@
 //! the proxy emits an `x-sibylhub-served-by` response header carrying
 //! the winning target's display name. See `chat::chat_completions`.
 
-use sibyl_gateway_hub::{ChatChunk, ChatResponse, FinishReason, Role};
 use serde::Serialize;
+use sibyl_gateway_hub::{ChatChunk, ChatResponse, FinishReason, Role};
 
 #[derive(Debug, Serialize)]
 pub struct ChatCompletion {

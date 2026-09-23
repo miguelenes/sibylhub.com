@@ -9,7 +9,7 @@ authors.workspace = true
 description = "sibyl-gateway: response cache (in-memory / Redis / semantic)"
 
 [dependencies]
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
 sibyl-gateway-obs = { path = "../sibyl-gateway-obs" }
 sibyl-gateway-redis = { path = "../sibyl-gateway-redis", optional = true }

@@ -13,11 +13,11 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use sibyl_gateway_core::config::RealIpConfig;
 use axum::extract::{ConnectInfo, FromRef, FromRequestParts};
 use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use ipnet::IpNet;
+use sibyl_gateway_core::config::RealIpConfig;
 
 use crate::state::ProxyState;
 

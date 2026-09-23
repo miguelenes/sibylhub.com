@@ -17,12 +17,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use sibyl_gateway_core::{ApiKey, ResourceEntry};
-use sibyl_gateway_obs::AccessLog;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
+use sibyl_gateway_core::{ApiKey, ResourceEntry};
+use sibyl_gateway_obs::AccessLog;
 
 use crate::error::ProxyError;
 use crate::request_id::{new_request_id, RequestId};
@@ -185,10 +185,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, ProxyConfig, ResourceEntry};
     use axum::body::Body;
     use axum::http::{Request as HttpRequest, StatusCode};
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, ProxyConfig, ResourceEntry};
     use std::sync::Arc;
     use tower::ServiceExt;
 

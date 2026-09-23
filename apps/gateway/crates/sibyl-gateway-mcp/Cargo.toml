@@ -13,7 +13,7 @@ sibyl-gateway-core = { path = "../sibyl-gateway-core" }
 # For `client_builder()`: the upstream connection settings (connect
 # timeout, TCP keepalive, pool expiry) are process-wide, so this
 # crate's outbound calls share them too.
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 tokio.workspace = true
 async-trait.workspace = true
 futures.workspace = true

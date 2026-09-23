@@ -15,14 +15,14 @@
 //! snapshot into a new one, mutate, and `store` it. That keeps the
 //! read path reading a fully-formed `Arc<Snapshot>` the whole time.
 
+use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use sibyl_gateway_core::config_status::{
     hash_record, hash_records, AppliedSnapshot, ConfigStatus, IncomingRejection, LazyHash,
     LoadObservation, PartialCompatResource, SourceKind,
 };
 use sibyl_gateway_core::snapshot::SnapshotHandle;
 use sibyl_gateway_core::GatewaySnapshot;
-use chrono::{DateTime, Utc};
-use futures::StreamExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -2742,13 +2742,20 @@ mod tests {
 
         let changed = state.version;
         let digest = hash_records(state.records());
-        state.insert(entry("/sibyl-gateway/models/0240", br#"{ "b": 2, "a": 2 }"#, 3));
+        state.insert(entry(
+            "/sibyl-gateway/models/0240",
+            br#"{ "b": 2, "a": 2 }"#,
+            3,
+        ));
         assert_eq!(
             state.version, changed,
             "canonical-equivalent bytes are not a change",
         );
         assert_eq!(hash_records(state.records()), digest);
-        assert_eq!(state.entries["/sibyl-gateway/models/0240"].entry.revision, 3);
+        assert_eq!(
+            state.entries["/sibyl-gateway/models/0240"].entry.revision,
+            3
+        );
 
         assert!(state.remove("/sibyl-gateway/models/missing").is_none());
         assert_eq!(
@@ -2820,7 +2827,11 @@ mod tests {
         let sup = Supervisor::new(Arc::new(FakeProvider::new(vec![], 0)), "/sibyl-gateway");
         let mut rows = Vec::new();
         for i in 0..16 {
-            rows.push(entry(&format!("/sibyl-gateway/models/{i:04}"), VALID_MODEL, i + 1));
+            rows.push(entry(
+                &format!("/sibyl-gateway/models/{i:04}"),
+                VALID_MODEL,
+                i + 1,
+            ));
             sup.apply_resync_at(&rows, Some(i + 1));
         }
         assert_eq!(
@@ -3149,7 +3160,11 @@ mod tests {
                 8,
             ),
             ScopedProvider::serving(
-                vec![entry("/sibyl-gateway/global/pricing/global-p", VALID_PRICE, 5)],
+                vec![entry(
+                    "/sibyl-gateway/global/pricing/global-p",
+                    VALID_PRICE,
+                    5,
+                )],
                 5,
             ),
         );
@@ -3173,7 +3188,10 @@ mod tests {
                 (
                     WatchedPrefix::environment("/sibyl-gateway"),
                     ScopedProvider::serving(
-                        vec![entry("/sibyl-gateway/models/m-1", VALID_MODEL, 3), shared.clone()],
+                        vec![
+                            entry("/sibyl-gateway/models/m-1", VALID_MODEL, 3),
+                            shared.clone(),
+                        ],
                         4,
                     ),
                 ),
@@ -3215,15 +3233,27 @@ mod tests {
         // themselves — which is how the first version of this case
         // stayed green against a last-prefix-wins mutation.
         let global_ahead = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 7),
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)], 42),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+                7,
+            ),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)],
+                42,
+            ),
         );
         global_ahead.load_once().await.unwrap();
         assert_eq!(global_ahead.watch_status().snapshot().revision, 7);
 
         let env_ahead = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 99),
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)], 5),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+                99,
+            ),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)],
+                5,
+            ),
         );
         env_ahead.load_once().await.unwrap();
         assert_eq!(env_ahead.watch_status().snapshot().revision, 5);
@@ -3240,7 +3270,10 @@ mod tests {
         // for. Distinct from the case above: here the overstatement comes
         // from an ENTRY, not from a header.
         let sup = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 90)], 100),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 90)],
+                100,
+            ),
             ScopedProvider::serving(
                 vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 103)],
                 105,
@@ -3262,7 +3295,10 @@ mod tests {
         // Reading its missing revision as 0 would freeze
         // `applied_revision` at the floor for the life of the deployment.
         let sup = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 31),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+                31,
+            ),
             ScopedProvider::refusing(),
         );
         sup.load_once().await.unwrap();
@@ -3279,11 +3315,20 @@ mod tests {
         const OTHER_PRICE: &[u8] =
             br#"{"key":"openai/gpt-4o","input_per_1k":0.001,"output_per_1k":0.002}"#;
         let sup = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 5),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+                5,
+            ),
             ScopedProvider::scripted(vec![
-                Some((vec![entry("/sibyl-gateway/global/pricing/g-1", VALID_PRICE, 3)], 3)),
+                Some((
+                    vec![entry("/sibyl-gateway/global/pricing/g-1", VALID_PRICE, 3)],
+                    3,
+                )),
                 None,
-                Some((vec![entry("/sibyl-gateway/global/pricing/g-2", OTHER_PRICE, 9)], 9)),
+                Some((
+                    vec![entry("/sibyl-gateway/global/pricing/g-2", OTHER_PRICE, 9)],
+                    9,
+                )),
             ]),
         );
 
@@ -3330,7 +3375,10 @@ mod tests {
                     WatchedPrefix::environment("/sibyl-gateway"),
                     ScopedProvider::scripted(vec![
                         Some((
-                            vec![entry("/sibyl-gateway/models/m-1", VALID_MODEL, 3), priced.clone()],
+                            vec![
+                                entry("/sibyl-gateway/models/m-1", VALID_MODEL, 3),
+                                priced.clone(),
+                            ],
                             4,
                         )),
                         // The price is deleted; the environment read that
@@ -3404,8 +3452,14 @@ mod tests {
         // its normal state: nobody writes prices most of the time. That
         // is what makes the bug reachable rather than theoretical.
         let sup = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 7),
-            ScopedProvider::quiet(vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)], 7),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+                7,
+            ),
+            ScopedProvider::quiet(
+                vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)],
+                7,
+            ),
         );
         let (_tx, rx) = tokio::sync::watch::channel(false);
 
@@ -3429,10 +3483,14 @@ mod tests {
         // from its read, and before the point its watch begins. The
         // window is one range read wide and the loss is silent until the
         // next resync.
-        let env =
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)], 7);
-        let global =
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)], 42);
+        let env = ScopedProvider::serving(
+            vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 1)],
+            7,
+        );
+        let global = ScopedProvider::serving(
+            vec![entry("/sibyl-gateway/global/pricing/g", VALID_PRICE, 1)],
+            42,
+        );
         let sup = scoped_supervisor(Arc::clone(&env), Arc::clone(&global));
 
         let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -3457,7 +3515,10 @@ mod tests {
         // refused too, and the cycle still runs to a clean end on the
         // environment's stream alone.
         let sup = scoped_supervisor(
-            ScopedProvider::serving(vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 3)], 3),
+            ScopedProvider::serving(
+                vec![entry("/sibyl-gateway/env-1/models/m-1", VALID_MODEL, 3)],
+                3,
+            ),
             ScopedProvider::refusing(),
         );
         let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -3525,13 +3586,21 @@ mod tests {
         assert!(sup.apply_put(&entry("/sibyl-gateway/api_keys/k-1", VALID_APIKEY, 3)));
         assert!(sup.apply_put(&entry("/sibyl-gateway/guardrails/g-1", VALID_GUARDRAIL, 4)));
         // Rejected with no previous good value: serves nothing.
-        assert!(!sup.apply_put(&entry("/sibyl-gateway/models/m-2", b"{\"display_name\": 7}", 5)));
+        assert!(!sup.apply_put(&entry(
+            "/sibyl-gateway/models/m-2",
+            b"{\"display_name\": 7}",
+            5
+        )));
         // Rejected over a row that WAS serving: keeps serving the pin.
         // Deliberately a key that sorts in the MIDDLE of the served set —
         // the pinned record has to take the key's own place in the
         // ordering, and a digest over the right bytes in the wrong order
         // is a different digest.
-        assert!(!sup.apply_put(&entry("/sibyl-gateway/guardrails/g-1", b"not json at all", 6)));
+        assert!(!sup.apply_put(&entry(
+            "/sibyl-gateway/guardrails/g-1",
+            b"not json at all",
+            6
+        )));
 
         let view = sup.config_status().view();
         let state: Vec<(String, Vec<u8>)> = sup
@@ -3718,7 +3787,11 @@ mod tests {
     #[tokio::test]
     async fn a_delete_breaks_the_run_of_puts_it_sits_between() {
         let events: Vec<Result<WatchEvent, ProviderError>> = vec![
-            Ok(WatchEvent::Put(entry("/sibyl-gateway/models/m-1", VALID_MODEL, 2))),
+            Ok(WatchEvent::Put(entry(
+                "/sibyl-gateway/models/m-1",
+                VALID_MODEL,
+                2,
+            ))),
             Ok(WatchEvent::Put(entry(
                 "/sibyl-gateway/api_keys/k-1",
                 VALID_APIKEY,
@@ -3728,7 +3801,11 @@ mod tests {
                 key: "/sibyl-gateway/models/m-1".into(),
                 revision: 4,
             }),
-            Ok(WatchEvent::Put(entry("/sibyl-gateway/models/m-1", VALID_MODEL, 5))),
+            Ok(WatchEvent::Put(entry(
+                "/sibyl-gateway/models/m-1",
+                VALID_MODEL,
+                5,
+            ))),
             Ok(WatchEvent::Put(entry(
                 "/sibyl-gateway/guardrails/g-1",
                 VALID_GUARDRAIL,
@@ -3867,7 +3944,11 @@ mod tests {
     #[tokio::test]
     async fn a_rejected_put_pins_the_accepted_put_before_it_in_the_same_batch() {
         let events: Vec<Result<WatchEvent, ProviderError>> = vec![
-            Ok(WatchEvent::Put(entry("/sibyl-gateway/models/m-1", VALID_MODEL, 2))),
+            Ok(WatchEvent::Put(entry(
+                "/sibyl-gateway/models/m-1",
+                VALID_MODEL,
+                2,
+            ))),
             Ok(WatchEvent::Put(entry(
                 "/sibyl-gateway/api_keys/k-1",
                 VALID_APIKEY,
@@ -4408,8 +4489,16 @@ mod tests {
         sup.load_once().await.unwrap();
 
         for (key, body, _kind) in [
-            ("/sibyl-gateway/provider_keys/pk-1", VALID_PROVIDER_KEY, "PK"),
-            ("/sibyl-gateway/guardrails/g-1", VALID_GUARDRAIL, "Guardrail"),
+            (
+                "/sibyl-gateway/provider_keys/pk-1",
+                VALID_PROVIDER_KEY,
+                "PK",
+            ),
+            (
+                "/sibyl-gateway/guardrails/g-1",
+                VALID_GUARDRAIL,
+                "Guardrail",
+            ),
             (
                 "/sibyl-gateway/guardrail_attachments/ga-1",
                 VALID_GUARDRAIL_ATTACHMENT,
@@ -4635,7 +4724,11 @@ mod tests {
     #[tokio::test]
     async fn run_loop_advances_revision_on_delete_event() {
         let provider = Arc::new(FakeProvider::new(vec![], 2).with_events(vec![
-            Ok(WatchEvent::Put(entry("/sibyl-gateway/models/m-1", VALID_MODEL, 5))),
+            Ok(WatchEvent::Put(entry(
+                "/sibyl-gateway/models/m-1",
+                VALID_MODEL,
+                5,
+            ))),
             Ok(WatchEvent::Delete {
                 key: "/sibyl-gateway/models/m-1".into(),
                 revision: 9,
@@ -4752,7 +4845,12 @@ mod tests {
 
         let survived = SnapshotCache::new(&cache_path)
             .load()
-            .is_some_and(|cached| cached.entries.iter().any(|e| e.key == "/sibyl-gateway/models/late"));
+            .is_some_and(|cached| {
+                cached
+                    .entries
+                    .iter()
+                    .any(|e| e.key == "/sibyl-gateway/models/late")
+            });
         assert!(
             survived,
             "the last apply before shutdown must reach disk; undrained, its \
@@ -4876,7 +4974,8 @@ mod tests {
                 vec![entry("/sibyl-gateway/models/m-1", VALID_MODEL, 7)],
                 7,
             ));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             sup.load_once().await.unwrap();
             // Deterministically wait for the spawned cache write to
             // complete before we drop the supervisor. Replaces an
@@ -4888,7 +4987,8 @@ mod tests {
         // populates the snapshot from disk so the proxy is ready.
         {
             let provider = Arc::new(FakeProvider::new(vec![], 0));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             // Snapshot is empty before restore.
             assert_eq!(sup.handle().load().models.len(), 0);
             sup.restore_from_cache();
@@ -4981,7 +5081,8 @@ mod tests {
         let cache_path = dir.path().join("snap.json");
 
         let provider = Arc::new(FakeProvider::new(vec![], 0));
-        let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+        let sup =
+            Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
         sup.load_once().await.unwrap();
 
         sup.apply_put(&entry("/sibyl-gateway/models/m-1", VALID_MODEL, 5));
@@ -5111,7 +5212,11 @@ mod tests {
         let provider = Arc::new(FakeProvider::new(vec![], 0));
         let sup = Supervisor::new(provider, "/sibyl-gateway");
 
-        assert!(!sup.apply_put(&entry("/sibyl-gateway/models/m-bad-1", BAD_PROVIDER_MODEL, 1)));
+        assert!(!sup.apply_put(&entry(
+            "/sibyl-gateway/models/m-bad-1",
+            BAD_PROVIDER_MODEL,
+            1
+        )));
         assert!(!sup.apply_put(&entry("/sibyl-gateway/models/m-bad-2", b"not-json", 2)));
         let rejections = sup.recent_rejections();
         assert_eq!(rejections.len(), 2);
@@ -5146,7 +5251,8 @@ mod tests {
         assert!(
             retained
                 .iter()
-                .any(|r| r.key == "/sibyl-gateway/models/m-bad" && r.kind == RejectionKind::SchemaFailed),
+                .any(|r| r.key == "/sibyl-gateway/models/m-bad"
+                    && r.kind == RejectionKind::SchemaFailed),
             "the real rejection must survive unknown-kind volume; retained {} rows",
             retained.len(),
         );
@@ -5176,7 +5282,9 @@ mod tests {
 
         let retained = sup.recent_rejections();
         assert!(
-            retained.iter().any(|r| r.key == "/sibyl-gateway/models/m-bad"),
+            retained
+                .iter()
+                .any(|r| r.key == "/sibyl-gateway/models/m-bad"),
             "a burst of unknown-kind puts must not push out the real rejection; \
              retained {} rows",
             retained.len(),
@@ -5392,7 +5500,8 @@ mod tests {
                 vec![entry("/sibyl-gateway/models/m-1", VALID_MODEL, 1)],
                 1,
             ));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             sup.load_once().await.unwrap();
             assert_eq!(sup.handle().load().models.len(), 1);
             sup.apply_resync(&[entry("/sibyl-gateway/models/m-1", BAD_PROVIDER_MODEL, 2)]);
@@ -5409,7 +5518,8 @@ mod tests {
         // it the restart is the cliff where the resource silently dies.
         {
             let provider = Arc::new(FakeProvider::new(vec![], 0));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             sup.restore_from_cache();
             assert_eq!(
                 sup.handle().load().models.len(),
@@ -5474,7 +5584,8 @@ mod tests {
                 vec![entry("/sibyl-gateway/models/m-1", VALID_MODEL, 1)],
                 1,
             ));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             sup.load_once().await.unwrap();
             assert!(!sup.apply_put(&entry("/sibyl-gateway/models/m-1", BAD_PROVIDER_MODEL, 2)));
             since_before = sup.recent_rejections()[0]
@@ -5485,7 +5596,8 @@ mod tests {
 
         {
             let provider = Arc::new(FakeProvider::new(vec![], 0));
-            let sup = Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
+            let sup =
+                Supervisor::with_cache(provider, "/sibyl-gateway", SnapshotCache::new(&cache_path));
             sup.restore_from_cache();
             assert_eq!(
                 sup.handle().load().models.len(),

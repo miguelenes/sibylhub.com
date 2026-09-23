@@ -10,7 +10,7 @@ description = "sibyl-gateway: Google Vertex AI provider bridge (skeleton — mul
 
 [dependencies]
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 # Claude on Vertex reuses the Anthropic Messages request serializer +
 # response decoder (same crate the Bedrock /invoke path reuses) — the
 # Vertex `:rawPredict` body is Anthropic Messages JSON with a

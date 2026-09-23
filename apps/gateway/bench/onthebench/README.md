@@ -33,7 +33,7 @@ Replicates the published onthebench setup (https://onthebench.ai/gateways/perfor
   https://github.com/GetBusbar/benchmarking). `rig-setup.sh` verifies their
   sha256 so a re-provisioned rig either runs the byte-identical instrument or
   fails loudly. These are the same binaries behind the public board and the
-  same `otb loadgen` used for the api7/sibyl-gateway#891 / #902 tables.
+  same `otb loadgen` used for the api7/aisix#891 / #902 tables.
 - **Default shipped config** — a setting may appear only if the process cannot
   run the benchmark without it. The full claim set (in `run-baseline.sh`):
   `resources_file` (boot: standalone source, else SibylHub Gateway demands etcd),
@@ -42,7 +42,7 @@ Replicates the published onthebench setup (https://onthebench.ai/gateways/perfor
   as the only upstream and minting the single client key (boot: SibylHub Gateway has no
   anonymous mode). Everything else — thread-per-core, worker count, telemetry —
   is whatever the defaults do.
-- **Load grid** — fixed concurrency, the api7/sibyl-gateway#891 grid by default:
+- **Load grid** — fixed concurrency, the api7/aisix#891 grid by default:
   c=16/32/128 against the 0-delay mock, c=768 against the 10ms-TTFT mock
   (`MOCK_TTFT_MS=10`). 25s windows, 5s warmup per point, ≥4 repetitions;
   a window with any failed request (`fail`, `rigrefused`, `budgetexceeded`,
@@ -61,7 +61,7 @@ Replicates the published onthebench setup (https://onthebench.ai/gateways/perfor
   VmHWM are in the metadata, alongside commit, binary sha256, instrument
   sha256s, core split, kernel, and the full method parameters.
 - **Flamegraph** — one on-CPU flamegraph at the c=128 saturation point per run
-  (`perf record -F 499 --call-graph dwarf,32768` → inferno), the api7/sibyl-gateway#847
+  (`perf record -F 499 --call-graph dwarf,32768` → inferno), the api7/aisix#847
   workflow. `rig-setup.sh` sets `kernel.perf_event_paranoid=1` (session-scoped,
   reverts on reboot) so an unprivileged run can sample its own process, and
   `run-baseline.sh` refuses a stripped binary before wasting a run. Every
@@ -105,7 +105,7 @@ with a warning rather than failing the run).
 
 `run-decay.sh <sibyl-gateway-src-dir> <out-dir>` measures the axis the load grid
 cannot see: what happens to gateway RSS *after* the load stops
-(api7/sibyl-gateway#968). One saturating burst of large bodies (default: c=64 for 60s,
+(api7/aisix#968). One saturating burst of large bodies (default: c=64 for 60s,
 ~120 KiB legal chat-completions requests standing in for inline-base64
 multimodal payloads), then 120s of idle sampling — VmRSS/VmHWM at ~2 Hz plus
 `smaps_rollup` Pss/LazyFree at ~1 Hz, because pages an allocator returns with

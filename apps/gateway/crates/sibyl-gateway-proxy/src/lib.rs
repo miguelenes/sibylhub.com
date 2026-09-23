@@ -104,23 +104,28 @@ pub use health::{
 };
 pub use state::{CacheBackends, ProxyState, SemanticRedisCell};
 
-use sibyl_gateway_obs::{AccessLog, CancelledLabels};
 use axum::extract::State;
 use axum::http::{header, HeaderValue, Request};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{any, get, post};
 use axum::Router;
+use sibyl_gateway_obs::{AccessLog, CancelledLabels};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Product token emitted in the `Server` response header. Format follows
-/// RFC 9110 §10.2.4 (`product/version`) and matches the convention used
-/// by adjacent gateways (APISIX, nginx, kong). Version is
-/// [`sibyl_gateway_core::BUILD_VERSION`]: CI-stamped from the release tag, crate
-/// version for local builds.
+/// RFC 9110 §10.2.4 (`product/version`); the product name is hyphenated
+/// because a product token cannot contain a space — `SibylHub Gateway/1.0`
+/// would parse as two products. Adjacent gateways (APISIX, nginx, kong)
+/// use the same single-token convention. Version is
+/// [`sibyl_gateway_core::BUILD_VERSION`]: CI-stamped from the release tag,
+/// crate version for local builds.
 static SERVER_HEADER_VALUE: std::sync::LazyLock<HeaderValue> = std::sync::LazyLock::new(|| {
-    HeaderValue::from_str(&format!("SibylHub Gateway/{}", sibyl_gateway_core::BUILD_VERSION))
-        .expect("build version must be a valid ASCII header value")
+    HeaderValue::from_str(&format!(
+        "SibylHub-Gateway/{}",
+        sibyl_gateway_core::BUILD_VERSION
+    ))
+    .expect("build version must be a valid ASCII header value")
 });
 
 /// Build the proxy router. Mounts `/livez` plus the
@@ -1299,11 +1304,12 @@ pub(crate) fn seed_env_scoped_guardrail(
     snap: &sibyl_gateway_core::GatewaySnapshot,
     guardrail: sibyl_gateway_core::ResourceEntry<sibyl_gateway_core::Guardrail>,
 ) {
-    let attachment: sibyl_gateway_core::models::GuardrailAttachment = serde_json::from_str(&format!(
-        r#"{{"guardrail_id": "{}", "scope_type": "env", "priority": 100}}"#,
-        guardrail.id
-    ))
-    .expect("env attachment must parse");
+    let attachment: sibyl_gateway_core::models::GuardrailAttachment =
+        serde_json::from_str(&format!(
+            r#"{{"guardrail_id": "{}", "scope_type": "env", "priority": 100}}"#,
+            guardrail.id
+        ))
+        .expect("env attachment must parse");
     snap.guardrail_attachments
         .insert(sibyl_gateway_core::ResourceEntry::new(
             format!("att-{}", guardrail.id),
@@ -1348,15 +1354,15 @@ mod tests {
         assert_eq!(normalize_endpoint_label("/mcp/"), "/mcp");
     }
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::{Hub, SseDecoder, SseEvent};
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use futures::StreamExt;
     use reqwest::Client;
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::{Hub, SseDecoder, SseEvent};
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{header, method, path};
@@ -1432,7 +1438,9 @@ mod tests {
     /// carrying the shared PK — the explicit-route successor of the
     /// removed implicit tunnel, so the ported #1116 semantics tests keep
     /// their original request shapes.
-    fn passthrough_route_entry(target_url: &str) -> ResourceEntry<sibyl_gateway_core::PassthroughRoute> {
+    fn passthrough_route_entry(
+        target_url: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::PassthroughRoute> {
         let cfg = format!(
             r#"{{
                 "name": "openai-tunnel",
@@ -1913,7 +1921,7 @@ mod tests {
 
     /// Every response — including success bodies, error envelopes, and
     /// short-circuited middleware rejections — must carry the gateway's
-    /// `Server` product token (`SibylHub Gateway/<semver>`) so clients can identify
+    /// `Server` product token (`SibylHub-Gateway/<semver>`) so clients can identify
     /// the data plane without round-tripping to a status endpoint.
     #[tokio::test]
     async fn server_header_identifies_the_data_plane() {
@@ -1936,8 +1944,9 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(
-            ok_server.starts_with("SibylHub Gateway/") && ok_server.len() > "SibylHub Gateway/".len(),
-            "expected `SibylHub Gateway/<version>`, got {ok_server:?}"
+            ok_server.starts_with("SibylHub-Gateway/")
+                && ok_server.len() > "SibylHub-Gateway/".len(),
+            "expected `SibylHub-Gateway/<version>`, got {ok_server:?}"
         );
 
         // Error path — auth failure envelope. Same Server header must
@@ -1993,8 +2002,8 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(
-            server.starts_with("SibylHub Gateway/"),
-            "expected `SibylHub Gateway/<version>`, got {server:?}"
+            server.starts_with("SibylHub-Gateway/"),
+            "expected `SibylHub-Gateway/<version>`, got {server:?}"
         );
     }
 
@@ -2060,7 +2069,7 @@ mod tests {
 
         let server = all[0].to_str().unwrap();
         assert!(
-            server.starts_with("SibylHub Gateway/"),
+            server.starts_with("SibylHub-Gateway/"),
             "Server must be the gateway identity; got {server:?}"
         );
         assert!(
@@ -2605,7 +2614,11 @@ mod tests {
         );
     }
 
-    fn build_state_with_limit(snapshot: GatewaySnapshot, hub: Arc<Hub>, limit: usize) -> ProxyState {
+    fn build_state_with_limit(
+        snapshot: GatewaySnapshot,
+        hub: Arc<Hub>,
+        limit: usize,
+    ) -> ProxyState {
         let handle = SnapshotHandle::new(snapshot);
         let cfg = ProxyConfig {
             addr: "127.0.0.1:0".into(),
@@ -3279,7 +3292,7 @@ mod tests {
     /// Cross-provider contract: Anthropic upstream 5xx → client sees an
     /// OpenAI-shape envelope `{error:{type:"upstream_error",...}}` with
     /// status 502 (collapsed per `BridgeError::http_status`, see
-    /// crates/sibyl-gateway-gateway/src/bridge.rs).
+    /// crates/sibyl-gateway-hub/src/bridge.rs).
     #[tokio::test]
     async fn upstream_anthropic_5xx_collapses_to_502_with_openai_envelope() {
         use sibyl_gateway_provider_anthropic::AnthropicBridge;
@@ -5960,7 +5973,10 @@ data: [DONE]\n\n";
         ResourceEntry::new(id, model, 1)
     }
 
-    fn pk_entry_with_id(pk_id: &str, api_base: &str) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
+    fn pk_entry_with_id(
+        pk_id: &str,
+        api_base: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
         let cfg = format!(
             r#"{{"display_name":"openai-{pk_id}","secret":"sk-upstream","api_base":"{api_base}","provider":"openai","adapter":"openai"}}"#
         );
@@ -8985,7 +9001,9 @@ data: [DONE]\n\n",
 
     /// A HOST-matched passthrough route, whose caller keeps the upstream's
     /// own path space — the forward-proxy shape.
-    fn host_matched_route_entry(target_url: &str) -> ResourceEntry<sibyl_gateway_core::PassthroughRoute> {
+    fn host_matched_route_entry(
+        target_url: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::PassthroughRoute> {
         let cfg = format!(
             r#"{{
                 "name": "forwarded-openai",
@@ -12426,7 +12444,10 @@ event: message_stop\ndata: {}\n\n",
             sibyl_gateway_core::Adapter::Anthropic,
             Arc::new(AnthropicBridge::new()),
         );
-        hub.register_family(sibyl_gateway_core::Adapter::Openai, Arc::new(OpenAiBridge::new()));
+        hub.register_family(
+            sibyl_gateway_core::Adapter::Openai,
+            Arc::new(OpenAiBridge::new()),
+        );
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let app = build_router(build_state(snap, hub).with_usage_sink(UsageSink::new(tx)));
 

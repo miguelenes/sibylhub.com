@@ -43,9 +43,9 @@
 //! - OAuth2 `client_credentials` spec (RFC 6749 §4.4):
 //!   <https://www.rfc-editor.org/rfc/rfc6749#section-4.4>
 
-use sibyl_gateway_hub::{credential_fingerprint, BridgeError};
 use reqwest::Client;
 use serde::Deserialize;
+use sibyl_gateway_hub::{credential_fingerprint, BridgeError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

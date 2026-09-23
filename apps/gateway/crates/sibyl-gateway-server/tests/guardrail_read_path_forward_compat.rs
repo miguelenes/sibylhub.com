@@ -37,7 +37,10 @@ fn guardrail_with_an_unknown_nested_field_loads_and_still_masks() {
         value: GUARDRAIL_FROM_A_NEWER_CP.to_vec(),
         revision: 1,
     }];
-    let (snapshot, stats) = build_snapshot(&sibyl_gateway_etcd::PrefixSet::single("/sibyl-gateway"), &entries);
+    let (snapshot, stats) = build_snapshot(
+        &sibyl_gateway_etcd::PrefixSet::single("/sibyl-gateway"),
+        &entries,
+    );
 
     assert_eq!(stats.accepted, 1, "rejections: {:?}", stats.rejections);
     assert_eq!(snapshot.guardrails.len(), 1);

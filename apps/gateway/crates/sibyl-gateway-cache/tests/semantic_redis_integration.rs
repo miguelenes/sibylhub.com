@@ -592,7 +592,9 @@ async fn lookup_recovers_after_external_index_loss() {
     .await;
 
     // Simulate the loss out-of-band through a raw connection.
-    let raw = sibyl_gateway_redis::connect(&single(&url)).await.expect("raw conn");
+    let raw = sibyl_gateway_redis::connect(&single(&url))
+        .await
+        .expect("raw conn");
     let mut conn = raw.acquire().await.expect("acquire");
     redis::cmd("FT.DROPINDEX")
         .arg(format!("sibyl-gateway:semcache:{policy}:idx:{policy}:0:2"))

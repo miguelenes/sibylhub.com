@@ -10,7 +10,7 @@ description = "sibyl-gateway: Azure OpenAI Service provider bridge (skeleton —
 
 [dependencies]
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 # Azure OpenAI's chat-completions wire shape is the OpenAI shape with
 # a different URL pattern + auth header + a tolerated `content_filter_results`
 # extension field. We reuse `sibyl-gateway-provider-openai`'s typed wire structs

@@ -44,12 +44,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use serde_json::{json, Value};
 use sibyl_gateway_core::models::{
     AliyunSlsConfig, DatadogConfig, ExporterKind, ObjectStoreConfig, ObservabilityExporter,
     OtlpHttpConfig, SlsContentMode,
 };
-use async_trait::async_trait;
-use serde_json::{json, Value};
 
 use crate::metrics::Metrics;
 use crate::sink::{
@@ -895,18 +895,30 @@ fn event_attributes(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
     // failover request emits one span per attempt sharing it, ordered by
     // `sibyl-gateway.attempt_index`. The OTLP encoder is an explicit allowlist, so
     // these are added here alongside the wire fields.
-    attributes.push(attr_int("sibyl-gateway.attempt_index", event.attempt_index as i64));
+    attributes.push(attr_int(
+        "sibyl-gateway.attempt_index",
+        event.attempt_index as i64,
+    ));
     if !event.attempt_kind.is_empty() {
-        attributes.push(attr_string("sibyl-gateway.attempt_kind", &event.attempt_kind));
+        attributes.push(attr_string(
+            "sibyl-gateway.attempt_kind",
+            &event.attempt_kind,
+        ));
     }
     if !event.attempt_model.is_empty() {
-        attributes.push(attr_string("sibyl-gateway.attempt_model", &event.attempt_model));
+        attributes.push(attr_string(
+            "sibyl-gateway.attempt_model",
+            &event.attempt_model,
+        ));
     }
     if !event.error_class.is_empty() {
         attributes.push(attr_string("sibyl-gateway.error_class", &event.error_class));
     }
     if !event.error_message.is_empty() {
-        attributes.push(attr_string("sibyl-gateway.error_message", &event.error_message));
+        attributes.push(attr_string(
+            "sibyl-gateway.error_message",
+            &event.error_message,
+        ));
     }
     // Downstream client attribution (#492). Custom attrs so exporters
     // can slice by source IP / client type; the OTLP encoder is an
@@ -940,7 +952,10 @@ fn event_attributes(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
         attributes.push(attr_string("sibyl-gateway.jwt_subject", &event.jwt_subject));
     }
     if !event.jwt_provider.is_empty() {
-        attributes.push(attr_string("sibyl-gateway.jwt_provider", &event.jwt_provider));
+        attributes.push(attr_string(
+            "sibyl-gateway.jwt_provider",
+            &event.jwt_provider,
+        ));
     }
     if !event.jwt_claim_mapping.is_empty() {
         attributes.push(attr_string(
@@ -969,7 +984,10 @@ fn event_attributes(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
             for (key, value) in [
                 ("sibyl-gateway.a2a.method", &event.a2a_method),
                 ("sibyl-gateway.a2a.operation", &event.a2a_operation),
-                ("sibyl-gateway.a2a.protocol_version", &event.a2a_protocol_version),
+                (
+                    "sibyl-gateway.a2a.protocol_version",
+                    &event.a2a_protocol_version,
+                ),
                 ("sibyl-gateway.a2a.task_id", &event.a2a_task_id),
                 ("sibyl-gateway.a2a.task_state", &event.a2a_task_state),
             ] {
@@ -989,7 +1007,10 @@ fn event_attributes(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
                 attributes.push(attr_string_capped("gen_ai.tool.name", &event.mcp_tool_name));
             }
             if !event.mcp_server_name.is_empty() {
-                attributes.push(attr_string("sibyl-gateway.mcp.server_name", &event.mcp_server_name));
+                attributes.push(attr_string(
+                    "sibyl-gateway.mcp.server_name",
+                    &event.mcp_server_name,
+                ));
             }
         }
         "passthrough" => {
@@ -1869,7 +1890,10 @@ mod tests {
         // A2A's context id is semconv's conversation id — the thread a
         // multi-turn exchange's tasks hang off.
         assert_eq!(string_at("gen_ai.conversation.id"), "ctx-4");
-        assert_eq!(string_at("sibyl-gateway.a2a.method"), "SendStreamingMessage");
+        assert_eq!(
+            string_at("sibyl-gateway.a2a.method"),
+            "SendStreamingMessage"
+        );
         assert_eq!(string_at("sibyl-gateway.a2a.operation"), "message/stream");
         assert_eq!(string_at("sibyl-gateway.a2a.protocol_version"), "1.0");
         assert_eq!(string_at("sibyl-gateway.a2a.task_id"), "task-9");
@@ -1894,8 +1918,14 @@ mod tests {
         let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
         let string_at = |k: &str| find(k).unwrap()["value"]["stringValue"].clone();
         assert_eq!(string_at("gen_ai.operation.name"), "passthrough");
-        assert_eq!(string_at("sibyl-gateway.passthrough.route_name"), "copilot-chat");
-        assert_eq!(string_at("sibyl-gateway.client_identity"), "alice@example.com");
+        assert_eq!(
+            string_at("sibyl-gateway.passthrough.route_name"),
+            "copilot-chat"
+        );
+        assert_eq!(
+            string_at("sibyl-gateway.client_identity"),
+            "alice@example.com"
+        );
     }
 
     #[test]
@@ -2115,8 +2145,12 @@ mod tests {
         let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
             .as_array()
             .unwrap();
-        let ip = attrs.iter().find(|a| a["key"] == "sibyl-gateway.client_source_ip");
-        let ua = attrs.iter().find(|a| a["key"] == "sibyl-gateway.client_user_agent");
+        let ip = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.client_source_ip");
+        let ua = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.client_user_agent");
         assert_eq!(
             ip.expect("client_source_ip attr")["value"]["stringValue"],
             "203.0.113.7"
@@ -2253,7 +2287,9 @@ mod tests {
         let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
             .as_array()
             .unwrap();
-        let ttft_attr = attrs.iter().find(|a| a["key"] == "sibyl-gateway.upstream_ttft_ms");
+        let ttft_attr = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.upstream_ttft_ms");
         assert!(
             ttft_attr.is_some(),
             "sibyl-gateway.upstream_ttft_ms should be present"

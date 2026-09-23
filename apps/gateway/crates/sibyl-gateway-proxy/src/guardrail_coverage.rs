@@ -26,11 +26,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use sibyl_gateway_core::snapshot::SnapshotHandle;
-use sibyl_gateway_core::{GatewaySnapshot, ApiKey, ProxyConfig, ResourceEntry};
-use sibyl_gateway_obs::{UsageEvent, UsageSink};
 use axum::body::Body;
 use axum::http::Request;
+use sibyl_gateway_core::snapshot::SnapshotHandle;
+use sibyl_gateway_core::{ApiKey, GatewaySnapshot, ProxyConfig, ResourceEntry};
+use sibyl_gateway_obs::{UsageEvent, UsageSink};
 use tower::ServiceExt;
 
 /// The source of the routing table. Parsed rather than duplicated so a new
@@ -435,7 +435,8 @@ fn census_router_with(
 ) -> (axum::Router, tokio::sync::mpsc::Receiver<UsageEvent>) {
     let snap = census_snapshot();
     snap.guardrails.remove("g-census");
-    let guardrail: sibyl_gateway_core::Guardrail = serde_json::from_value(row).expect("valid guardrail");
+    let guardrail: sibyl_gateway_core::Guardrail =
+        serde_json::from_value(row).expect("valid guardrail");
     crate::seed_env_scoped_guardrail(&snap, ResourceEntry::new("g-census", guardrail, 2));
     let handle = SnapshotHandle::new(snap);
     let index = sibyl_gateway_guardrails::LiveGuardrailIndex::new(handle.clone(), None);

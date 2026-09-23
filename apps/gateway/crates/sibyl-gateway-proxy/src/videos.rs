@@ -69,8 +69,6 @@
 //! control-plane follow-up; the GET routes emit no usage events by
 //! design (poll traffic would flood /logs with no billing signal).
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_obs::{AccessLog, UsageEvent};
 use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -78,6 +76,8 @@ use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_obs::{AccessLog, UsageEvent};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::auth::AuthenticatedKey;
@@ -345,7 +345,9 @@ struct PollView {
 }
 
 fn upstream_decode(msg: &str) -> ProxyError {
-    ProxyError::Bridge(sibyl_gateway_hub::BridgeError::UpstreamDecode(msg.to_string()))
+    ProxyError::Bridge(sibyl_gateway_hub::BridgeError::UpstreamDecode(
+        msg.to_string(),
+    ))
 }
 
 // ─────────────────────── DashScope param mapping ───────────────────────
@@ -1228,10 +1230,11 @@ async fn provider_call(
                     .await
                     .map_err(|e| note(crate::dispatch::reqwest_error_to_bridge(&e, started)))?;
                 let status = resp.status().as_u16();
-                let bytes = resp
-                    .bytes()
-                    .await
-                    .map_err(|e| note(sibyl_gateway_hub::BridgeError::UpstreamDecode(e.to_string())))?;
+                let bytes = resp.bytes().await.map_err(|e| {
+                    note(sibyl_gateway_hub::BridgeError::UpstreamDecode(
+                        e.to_string(),
+                    ))
+                })?;
 
                 if !(200..300).contains(&status) {
                     let message = parse_provider_error_message(&bytes);
@@ -2097,12 +2100,12 @@ fn emit_submit_usage_event(
 mod tests {
     use super::*;
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
     use axum::body::to_bytes;
     use axum::http::Request;
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

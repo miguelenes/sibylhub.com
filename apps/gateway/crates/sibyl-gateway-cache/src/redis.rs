@@ -14,12 +14,12 @@
 
 use std::time::Duration;
 
+use async_trait::async_trait;
+use redis::AsyncCommands;
 use sibyl_gateway_core::RedisConnConfig;
 use sibyl_gateway_hub::ChatResponse;
 use sibyl_gateway_obs::metrics::Metrics;
 use sibyl_gateway_redis::ConnSlot;
-use async_trait::async_trait;
-use redis::AsyncCommands;
 
 use crate::cache::{Cache, CacheError};
 
@@ -213,7 +213,10 @@ mod tests {
         // Construct a RedisCache without actually opening a connection by
         // using a dummy ConnectionManager via mem::forget? No — we'd leak.
         // Easier: test the prefix logic via a free function.
-        assert_eq!(prefix_join("sibyl-gateway:cache", "ab12"), "sibyl-gateway:cache:ab12");
+        assert_eq!(
+            prefix_join("sibyl-gateway:cache", "ab12"),
+            "sibyl-gateway:cache:ab12"
+        );
         assert_eq!(prefix_join("", "x"), ":x");
     }
 

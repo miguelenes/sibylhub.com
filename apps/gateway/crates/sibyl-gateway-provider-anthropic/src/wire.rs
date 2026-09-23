@@ -23,6 +23,7 @@
 
 use std::borrow::Cow;
 
+use serde::{Deserialize, Serialize};
 use sibyl_gateway_core::MappedEffort;
 use sibyl_gateway_hub::structured_output::{
     apply_schema_limits, json_schema_from_response_format, seal_object_schemas,
@@ -32,7 +33,6 @@ use sibyl_gateway_hub::{
     BridgeError, ChatChunk, ChatDelta, ChatFormat, ChatMessage, ChatResponse, FinishReason, Role,
     UsageStats,
 };
-use serde::{Deserialize, Serialize};
 
 /// Anthropic requires a non-zero `max_tokens`. Clients that omit it get
 /// this ceiling — generous enough to cover normal completions, conservative

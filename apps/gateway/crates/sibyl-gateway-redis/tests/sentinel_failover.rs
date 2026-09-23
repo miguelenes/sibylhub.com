@@ -9,9 +9,9 @@
 
 use std::time::Duration;
 
+use redis::AsyncCommands;
 use sibyl_gateway_core::{RedisConnConfig, RedisMode};
 use sibyl_gateway_redis::{connect, RedisConn};
-use redis::AsyncCommands;
 
 fn sentinel_cfg() -> Option<(RedisConnConfig, String, String)> {
     let sentinels = std::env::var("REDIS_FAILOVER_SENTINELS").ok()?;

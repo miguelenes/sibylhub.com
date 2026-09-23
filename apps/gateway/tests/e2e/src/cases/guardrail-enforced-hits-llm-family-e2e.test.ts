@@ -20,7 +20,7 @@ import {
 } from "../harness/index.js";
 
 // E2E: `UsageEvent.guardrail_enforced_hits` across the LLM handler family
-// (api7/sibyl-gateway#1024), against a real DP + etcd + a real SOC export target.
+// (api7/aisix#1024), against a real DP + etcd + a real SOC export target.
 //
 // AISIX-Cloud#1330 shipped the audit chain on `/mcp` only. The gap on the
 // rest of the family was SILENT: an ENFORCING mask on `/v1/messages` or

@@ -16,16 +16,16 @@
 //! 8. Call `bridge.complete(body, ctx)` → JSON response.
 //! 9. Providers that don't support completions return 501.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_hub::{
-    BridgeCapability, BridgeError, ChatMessage, ChatResponse, FinishReason, UsageStats,
-};
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_hub::{
+    BridgeCapability, BridgeError, ChatMessage, ChatResponse, FinishReason, UsageStats,
+};
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -378,8 +378,11 @@ async fn dispatch(
     if !resolved_chain.is_empty() {
         let chat = completions_input_to_chat(model_name, &body);
         let (verdict, hits) =
-            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(&resolved_chain, &chat)
-                .await;
+            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(
+                &resolved_chain,
+                &chat,
+            )
+            .await;
         monitor_hits.extend(hits);
         // Segment pass: one Bedrock call over the prompt slots; an
         // ANONYMIZE disposition writes the masked text back into the body
@@ -935,13 +938,13 @@ fn emit_access_log(
 #[cfg(test)]
 mod tests {
 
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

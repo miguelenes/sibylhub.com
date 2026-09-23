@@ -34,9 +34,6 @@
 //! a stream the caller asked to watch grow is silent degradation, and
 //! the live-relay plumbing (#998) is a follow-up, not a Phase 1 rider.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_hub::ChatMessage;
-use sibyl_gateway_obs::{content_capture_cap, CapturedContent};
 use axum::body::Bytes;
 use axum::extract::{Multipart, State};
 use axum::http::header;
@@ -44,6 +41,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use reqwest::multipart;
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_hub::ChatMessage;
+use sibyl_gateway_obs::{content_capture_cap, CapturedContent};
 use std::time::Instant;
 
 use crate::auth::AuthenticatedKey;
@@ -349,7 +349,8 @@ async fn dispatch(
         {
             let chat = sibyl_gateway_hub::ChatFormat::new(&model_name, prompt_messages);
             let (verdict, hits) =
-                sibyl_gateway_guardrails::Guardrail::check_input_observed(&resolved_chain, &chat).await;
+                sibyl_gateway_guardrails::Guardrail::check_input_observed(&resolved_chain, &chat)
+                    .await;
             monitor_hits.extend(hits);
             if let sibyl_gateway_guardrails::GuardrailVerdict::Block {
                 reason,
@@ -377,9 +378,10 @@ async fn dispatch(
                     continue;
                 }
                 if let Ok(text) = std::str::from_utf8(data) {
-                    if let Some(r) =
-                        sibyl_gateway_guardrails::Guardrail::redact_input_text(&resolved_chain, text)
-                    {
+                    if let Some(r) = sibyl_gateway_guardrails::Guardrail::redact_input_text(
+                        &resolved_chain,
+                        text,
+                    ) {
                         *data = Bytes::from(r.text.into_bytes());
                         crate::redact::merge_counts(&mut redactions, r.counts);
                     }
@@ -656,13 +658,13 @@ async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

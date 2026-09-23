@@ -81,7 +81,8 @@ pub const M_LLM_CACHED_INPUT_TOKENS_TOTAL: &str = "sibyl_gateway_llm_cached_inpu
 /// Prompt-cache hits the upstream reported as a counter separate from its
 /// input tokens — NOT included in [`M_LLM_INPUT_TOKENS_TOTAL`], and
 /// included in [`M_LLM_TOTAL_TOKENS_TOTAL`].
-pub const M_LLM_CACHE_READ_INPUT_TOKENS_TOTAL: &str = "sibyl_gateway_llm_cache_read_input_tokens_total";
+pub const M_LLM_CACHE_READ_INPUT_TOKENS_TOTAL: &str =
+    "sibyl_gateway_llm_cache_read_input_tokens_total";
 /// Input tokens written INTO the upstream's prompt cache. Reported as a
 /// counter separate from input tokens, and billed at a premium by every
 /// provider that reports it.
@@ -138,7 +139,8 @@ pub const M_PROXY_REQUEST_DURATION: &str = "sibyl_gateway_proxy_request_duration
 /// no status, no outcome and often no team / user, so the caller-identity
 /// dimensions would be `unknown` on every sample and cost series for
 /// nothing.
-pub const M_PROXY_CLIENT_CANCELLED_TOTAL: &str = "sibyl_gateway_proxy_client_cancelled_requests_total";
+pub const M_PROXY_CLIENT_CANCELLED_TOTAL: &str =
+    "sibyl_gateway_proxy_client_cancelled_requests_total";
 /// Requests refused by the `request_body_limit_bytes` cap before any
 /// handler ran, split by how the gateway's drain of the refused body
 /// ended. `outcome != "completed"` means the gateway stopped reading
@@ -195,7 +197,8 @@ pub const M_DEPLOYMENT_COOLED_DOWN_TOTAL: &str = "sibyl_gateway_deployment_coole
 /// `model` is what the caller asked for (the Model-Group name);
 /// `fallback_model` is the target the gateway moved to. Both are
 /// configured names, so the label set is bounded by the resource set.
-pub const M_ROUTING_SUCCESSFUL_FALLBACKS_TOTAL: &str = "sibyl_gateway_routing_successful_fallbacks_total";
+pub const M_ROUTING_SUCCESSFUL_FALLBACKS_TOTAL: &str =
+    "sibyl_gateway_routing_successful_fallbacks_total";
 pub const M_ROUTING_FAILED_FALLBACKS_TOTAL: &str = "sibyl_gateway_routing_failed_fallbacks_total";
 pub const M_RATELIMIT_REMAINING_REQUESTS: &str = "sibyl_gateway_ratelimit_remaining_requests";
 pub const M_RATELIMIT_REMAINING_TOKENS: &str = "sibyl_gateway_ratelimit_remaining_tokens";
@@ -339,7 +342,8 @@ pub const M_CACHE_SEMANTIC_EMBED_FAILURES_TOTAL: &str =
 /// makes a broken store indistinguishable from a healthy low hit rate
 /// in the outcome counter alone — this series is the disambiguator.
 /// The in-process store cannot fail today; shared (redis) stores can.
-pub const M_CACHE_SEMANTIC_STORE_FAILURES_TOTAL: &str = "sibyl_gateway_cache_semantic_store_failures_total";
+pub const M_CACHE_SEMANTIC_STORE_FAILURES_TOTAL: &str =
+    "sibyl_gateway_cache_semantic_store_failures_total";
 pub const M_OTLP_FANOUT_DROPS_TOTAL: &str = "sibyl_gateway_otlp_fanout_drops_total";
 pub const M_OTLP_FANOUT_FAILURES_TOTAL: &str = "sibyl_gateway_otlp_fanout_failures_total";
 /// AISIX-Cloud#1011: SLO-grade latency distributions as REAL bucketed
@@ -4148,11 +4152,10 @@ mod tests {
         );
         let rendered = selected.render();
         for user_name in ["alice", "bob"] {
-            assert!(rendered
-                .lines()
-                .any(|line| line.starts_with("sibyl_gateway_request_ttft_seconds_count{")
-                    && line.contains(&format!("user_name=\"{user_name}\""))
-                    && line.ends_with(" 2")));
+            assert!(rendered.lines().any(|line| line
+                .starts_with("sibyl_gateway_request_ttft_seconds_count{")
+                && line.contains(&format!("user_name=\"{user_name}\""))
+                && line.ends_with(" 2")));
         }
     }
 
@@ -5801,12 +5804,11 @@ mod tests {
         assert!(rendered.contains("token_type=\"total\""));
         // input=110, output=40, total=165 — the total series counts the 15
         // cache tokens the input series omits (165 > 110 + 40).
-        assert!(rendered
-            .lines()
-            .any(|l| l.starts_with("sibyl_gateway_llm_tokens_by_client_total{")
-                && l.contains("token_type=\"total\"")
-                && l.contains("model=\"gpt-4o\"")
-                && l.trim_end().ends_with(" 165")));
+        assert!(rendered.lines().any(|l| l
+            .starts_with("sibyl_gateway_llm_tokens_by_client_total{")
+            && l.contains("token_type=\"total\"")
+            && l.contains("model=\"gpt-4o\"")
+            && l.trim_end().ends_with(" 165")));
         // The all-zero curl call recorded nothing.
         assert!(!rendered.contains("client_type=\"curl\""));
     }
@@ -6377,7 +6379,9 @@ mod tests {
         assert!(err.contains("exceed the limit of 64"), "{err}");
     }
 
-    fn config_metrics_view(source_kind: sibyl_gateway_core::SourceKind) -> sibyl_gateway_core::ConfigMetricsView {
+    fn config_metrics_view(
+        source_kind: sibyl_gateway_core::SourceKind,
+    ) -> sibyl_gateway_core::ConfigMetricsView {
         sibyl_gateway_core::ConfigMetricsView {
             source_kind,
             last_reload_successful: true,

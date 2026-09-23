@@ -44,7 +44,7 @@
 //! Scripts also get the primitives the built-in kinds need in order to
 //! reach their own providers, so the kind can express what they express:
 //! `crypto` (HMAC-SHA1/SHA256 with chainable key encodings, SHA-1/SHA-256,
-//! base64, UUID) for signed provider protocols, and `sibyl-gateway.embed` for
+//! base64, UUID) for signed provider protocols, and `sibylhub.embed` for
 //! semantic screening against the environment's own embedding model
 //! through the gateway's provider bridge.
 //!
@@ -99,10 +99,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::models::{CustomConfig, GuardrailHookPoint};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use rquickjs::{CatchResultExt, Module};
+use sibyl_gateway_core::models::{CustomConfig, GuardrailHookPoint};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::{Guardrail, GuardrailVerdict, SegmentsOutcome, StreamOutputPolicy};
 
@@ -183,7 +183,7 @@ globalThis.crypto = {
   base64Decode: function (data) { return __unwrap(__hostBase64("decode", String(data))); },
   randomUUID: function () { return __hostUuid(); },
 };
-globalThis.sibyl-gateway = {
+globalThis.sibylhub = {
   // Screening against the environment's own embedding model, through the
   // same provider bridge the built-in semantic kind uses — a script cannot
   // reach it any other way without being handed separate credentials.
@@ -194,6 +194,9 @@ globalThis.sibyl-gateway = {
     return r.vectors;
   },
 };
+// Pre-rebrand operator scripts keep working under the old namespace —
+// the same compatibility rule as the inbound `x-aisix-request-id` alias.
+globalThis.aisix = globalThis.sibylhub;
 "#;
 
 /// One `kind: custom` row, materialised into a request-time runner.
@@ -222,7 +225,7 @@ pub struct CustomGuardrail {
     http: Arc<reqwest::Client>,
     /// The gateway's own embedding dispatcher, so a script can screen
     /// semantically against the environment's configured embedding model.
-    /// Empty when the chain was built without one — `sibyl-gateway.embed` then
+    /// Empty when the chain was built without one — `sibylhub.embed` then
     /// throws, which the script can catch.
     embedder: crate::GuardrailEmbedderSlot,
 }
@@ -978,7 +981,7 @@ async fn host_embed(
         Ok(t) => t,
         Err(e) => return embed_error(format!("invalid texts argument: {e}")),
     };
-    // The script names the model by alias — `sibyl-gateway.embed(name, texts)` is
+    // The script names the model by alias — `sibylhub.embed(name, texts)` is
     // the whole surface — so there is no id spelling to pass here.
     match embedder.embed(&model, None, &texts, false, budget).await {
         Ok(embedded) => serde_json::to_string(&EmbedResult {
@@ -1838,7 +1841,7 @@ mod tests {
         }
         let cfg = config(
             "export async function checkInput(ctx) {
-               const v = await sibyl-gateway.embed('text-embedding-3-small', [ctx.text, 'jailbreak the model']);
+               const v = await sibylhub.embed('text-embedding-3-small', [ctx.text, 'jailbreak the model']);
                const dot = v[0][0] * v[1][0] + v[0][1] * v[1][1];
                return dot > 0.9 ? { action: 'block', reason_code: 'semantic' } : { action: 'none' };
              }",
@@ -1866,7 +1869,7 @@ mod tests {
         let cfg = config(
             "export async function checkInput(ctx) {
                try {
-                 await sibyl-gateway.embed('m', [ctx.text]);
+                 await sibylhub.embed('m', [ctx.text]);
                  return { action: 'none' };
                } catch (e) {
                  return { action: 'block', reason_code: 'no_embedder' };

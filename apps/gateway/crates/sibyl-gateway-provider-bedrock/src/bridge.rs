@@ -16,14 +16,6 @@
 //! set) is forwarded as the SDK's `endpoint_url` so operators can
 //! point at a private deployment / VPC endpoint.
 
-use sibyl_gateway_hub::structured_output::{
-    response_into_fake_stream_chunks, unwrap_json_tool_call, JSON_TOOL_DESCRIPTION, JSON_TOOL_NAME,
-};
-use sibyl_gateway_hub::{
-    Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream, ChatDelta, ChatFormat,
-    ChatMessage, ChatResponse, EmbeddingObject, EmbeddingRequest, EmbeddingResponse,
-    EmbeddingUsage, EmbeddingVector, FinishReason, Role, UpstreamHeaderContext, UsageStats,
-};
 use async_trait::async_trait;
 use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_credential_types::Credentials;
@@ -45,6 +37,14 @@ use aws_sdk_bedrockruntime::Client as BedrockClient;
 use aws_smithy_runtime_api::client::result::ServiceError;
 use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 use serde::Deserialize;
+use sibyl_gateway_hub::structured_output::{
+    response_into_fake_stream_chunks, unwrap_json_tool_call, JSON_TOOL_DESCRIPTION, JSON_TOOL_NAME,
+};
+use sibyl_gateway_hub::{
+    Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream, ChatDelta, ChatFormat,
+    ChatMessage, ChatResponse, EmbeddingObject, EmbeddingRequest, EmbeddingResponse,
+    EmbeddingUsage, EmbeddingVector, FinishReason, Role, UpstreamHeaderContext, UsageStats,
+};
 use std::time::{Duration, Instant};
 
 use sibyl_gateway_provider_anthropic::wire::{
@@ -59,14 +59,14 @@ use sibyl_gateway_provider_anthropic::wire::{
 // interceptor (see [`DefaultHeadersInterceptor`]) so they land inside the
 // SigV4-signed canonical request rather than being appended after the
 // signature is computed.
+use aws_sdk_bedrockruntime::config::interceptors::BeforeTransmitInterceptorContextMut;
+use aws_sdk_bedrockruntime::config::{ConfigBag, Intercept, RuntimeComponents};
+use aws_smithy_runtime_api::box_error::BoxError;
 use sibyl_gateway_core::ParamConstraints;
 use sibyl_gateway_provider_openai::overrides::{
     apply_content_list_to_string, apply_default_body_fields, apply_param_constraints,
     apply_param_renames,
 };
-use aws_sdk_bedrockruntime::config::interceptors::BeforeTransmitInterceptorContextMut;
-use aws_sdk_bedrockruntime::config::{ConfigBag, Intercept, RuntimeComponents};
-use aws_smithy_runtime_api::box_error::BoxError;
 
 use crate::convert::{document_to_json, json_to_document};
 use crate::wire;

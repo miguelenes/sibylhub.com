@@ -23,6 +23,8 @@
 //! "the gateway does not abort on a single bad entry; it serves the
 //! rest."
 
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use sibyl_gateway_core::models::{
     validate_a2a_agent_lenient, validate_apikey_lenient, validate_cache_policy_lenient,
     validate_claim_mapping_lenient, validate_guardrail_attachment_lenient,
@@ -37,8 +39,6 @@ use sibyl_gateway_core::models::{
 use sibyl_gateway_core::models::{validate_pricing_lenient, Pricing};
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::GatewaySnapshot;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::key::{PrefixScope, PrefixSet, ScopedKey};
@@ -1028,7 +1028,11 @@ mod tests {
 
     #[test]
     fn provider_key_happy_path_accepts() {
-        let entries = vec![raw("/sibyl-gateway/provider_keys/pk-1", VALID_PROVIDER_KEY, 1)];
+        let entries = vec![raw(
+            "/sibyl-gateway/provider_keys/pk-1",
+            VALID_PROVIDER_KEY,
+            1,
+        )];
         let (snap, stats) = build_snapshot(&env_prefixes(), &entries);
         assert_eq!(stats.accepted, 1);
         assert_eq!(snap.provider_keys.len(), 1);

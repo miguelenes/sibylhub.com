@@ -21,9 +21,9 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use sibyl_gateway_hub::{ChatChunk, ChatFormat, ChatResponse, Role};
-use sibyl_gateway_guardrails::Guardrail;
 use serde_json::Value;
+use sibyl_gateway_guardrails::Guardrail;
+use sibyl_gateway_hub::{ChatChunk, ChatFormat, ChatResponse, Role};
 
 /// detector name → masked-span count. Mirrors
 /// `UsageEvent::redacted_entity_counts`.
@@ -134,7 +134,11 @@ impl SegmentCollector {
         std::mem::take(&mut *slots).into_iter().unzip()
     }
 
-    fn record(&self, text: &str, in_latest_turn: bool) -> Option<sibyl_gateway_guardrails::Redaction> {
+    fn record(
+        &self,
+        text: &str,
+        in_latest_turn: bool,
+    ) -> Option<sibyl_gateway_guardrails::Redaction> {
         self.texts
             .lock()
             .expect("collector poisoned")
@@ -1965,9 +1969,9 @@ pub fn redact_responses_sse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_hub::{ChatDelta, ChatMessage};
-    use sibyl_gateway_guardrails::{builtin_rule, GuardrailChain, PiiAction, PiiGuardrail};
     use serde_json::json;
+    use sibyl_gateway_guardrails::{builtin_rule, GuardrailChain, PiiAction, PiiGuardrail};
+    use sibyl_gateway_hub::{ChatDelta, ChatMessage};
     use std::sync::Arc;
 
     fn mask_chain(hook: sibyl_gateway_core::models::GuardrailHookPoint) -> Arc<dyn Guardrail> {
@@ -2334,12 +2338,14 @@ mod tests {
             ]}]
         });
         let chat = sibyl_gateway_provider_anthropic::parse_inbound_request_for_scan(&body).unwrap();
-        let verdict = futures::executor::block_on(sibyl_gateway_guardrails::Guardrail::check_input(
-            chain.as_ref(),
-            &chat,
-        ));
+        let verdict = futures::executor::block_on(
+            sibyl_gateway_guardrails::Guardrail::check_input(chain.as_ref(), &chat),
+        );
         assert!(
-            matches!(verdict, sibyl_gateway_guardrails::GuardrailVerdict::Block { .. }),
+            matches!(
+                verdict,
+                sibyl_gateway_guardrails::GuardrailVerdict::Block { .. }
+            ),
             "a block rule must still reach thinking text, got {verdict:?}",
         );
     }

@@ -65,12 +65,12 @@ pub use file_store::FileManagedStore;
 pub use state::AdminState;
 pub use store::{ConfigStore, InMemoryStore, StoreError};
 
+use axum::routing::{get, post};
+use axum::{http::StatusCode, response::Response, Router};
 use sibyl_gateway_core::config::PrometheusConfig;
 use sibyl_gateway_core::ConfigStatus;
 use sibyl_gateway_obs::Metrics;
 use sibyl_gateway_proxy::ModelRuntimeStatusTracker;
-use axum::routing::{get, post};
-use axum::{http::StatusCode, response::Response, Router};
 use std::sync::Arc;
 
 /// Shared state for the dedicated metrics/status listener: the Prometheus
@@ -434,10 +434,9 @@ async fn readyz(
     axum::extract::State(state): axum::extract::State<AdminState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let config_block = state
-        .watch_status
-        .as_ref()
-        .and_then(|ws| sibyl_gateway_proxy::health::config_readiness_block(ws.snapshot().last_apply_age));
+    let config_block = state.watch_status.as_ref().and_then(|ws| {
+        sibyl_gateway_proxy::health::config_readiness_block(ws.snapshot().last_apply_age)
+    });
     sibyl_gateway_proxy::health::readyz_response(
         &state.livez_state,
         config_block,
@@ -448,11 +447,11 @@ async fn readyz(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{AdminConfig, GatewaySnapshot};
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use serde_json::{json, Value};
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{AdminConfig, GatewaySnapshot};
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -1251,7 +1250,8 @@ mod tests {
     async fn list_models_returns_seeded_entries() {
         let (state, store) = build_seedable_state();
         for (id, name) in [("m-1", "foo"), ("m-2", "bar")] {
-            let model: sibyl_gateway_core::Model = serde_json::from_value(model_payload(name)).unwrap();
+            let model: sibyl_gateway_core::Model =
+                serde_json::from_value(model_payload(name)).unwrap();
             store
                 .put_model(sibyl_gateway_core::ResourceEntry::new(id, model, 1))
                 .await
@@ -1267,7 +1267,8 @@ mod tests {
     #[tokio::test]
     async fn get_model_serves_seeded_entry() {
         let (state, store) = build_seedable_state();
-        let model: sibyl_gateway_core::Model = serde_json::from_value(model_payload("foo")).unwrap();
+        let model: sibyl_gateway_core::Model =
+            serde_json::from_value(model_payload("foo")).unwrap();
         store
             .put_model(sibyl_gateway_core::ResourceEntry::new("m-1", model, 1))
             .await
@@ -1399,7 +1400,8 @@ mod tests {
     #[tokio::test]
     async fn health_lists_models_with_default_healthy_when_no_tracker() {
         let (state, store) = build_seedable_state();
-        let model: sibyl_gateway_core::Model = serde_json::from_value(model_payload("gpt4")).unwrap();
+        let model: sibyl_gateway_core::Model =
+            serde_json::from_value(model_payload("gpt4")).unwrap();
         store
             .put_model(sibyl_gateway_core::ResourceEntry::new("m-1", model, 1))
             .await
@@ -1521,7 +1523,8 @@ mod tests {
     /// store reads from the file-loaded snapshot.
     fn build_file_managed_state() -> AdminState {
         let snapshot = GatewaySnapshot::new();
-        let model: sibyl_gateway_core::Model = serde_json::from_value(model_payload("file-model")).unwrap();
+        let model: sibyl_gateway_core::Model =
+            serde_json::from_value(model_payload("file-model")).unwrap();
         snapshot
             .models
             .insert(sibyl_gateway_core::ResourceEntry::new("m-file-1", model, 1));

@@ -34,7 +34,7 @@ use super::yaml::EnvLookup;
 /// Fixed UUIDv5 namespace for deterministic file-resource ids.
 ///
 /// Derived once as `uuid5(NAMESPACE_URL,
-/// "https://github.com/api7/sibyl-gateway#resources-file")` and pinned here so
+/// "https://github.com/api7/aisix#resources-file")` and pinned here so
 /// the value can never drift; a unit test re-derives it. Every resource
 /// loaded from the file gets `uuid5(FILE_RESOURCE_NAMESPACE,
 /// "<kind>/<identity>")` — stable across reloads and across processes,
@@ -486,7 +486,7 @@ mod tests {
             FILE_RESOURCE_NAMESPACE,
             Uuid::new_v5(
                 &Uuid::NAMESPACE_URL,
-                b"https://github.com/api7/sibyl-gateway#resources-file"
+                b"https://github.com/api7/aisix#resources-file"
             ),
         );
     }

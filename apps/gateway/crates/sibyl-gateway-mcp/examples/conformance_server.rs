@@ -32,7 +32,6 @@
 
 use std::sync::Arc;
 
-use sibyl_gateway_mcp::{streamable_http_service, McpGateway};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -41,6 +40,7 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{RoleServer, ServerHandler};
+use sibyl_gateway_mcp::{streamable_http_service, McpGateway};
 
 /// 1x1 red-pixel PNG.
 const TEST_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -188,7 +188,9 @@ async fn main() {
     let snapshot = sibyl_gateway_core::GatewaySnapshot::new();
     snapshot
         .mcp_servers
-        .insert(sibyl_gateway_core::ResourceEntry::new("mcp-conf", server, 1));
+        .insert(sibyl_gateway_core::ResourceEntry::new(
+            "mcp-conf", server, 1,
+        ));
     let gateway = McpGateway::from_snapshot_scoped(&snapshot, "conformance")
         .expect("scoped gateway over the registered upstream");
 

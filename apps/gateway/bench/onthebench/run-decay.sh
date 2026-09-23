@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-load RSS decay runner (api7/sibyl-gateway#968): after a burst of large-payload
+# Post-load RSS decay runner (api7/aisix#968): after a burst of large-payload
 # traffic stops, does the gateway hand freed pages back to the OS, or does
 # RSS ratchet at the burst peak? One saturating burst of BENCH_DECAY_BODY_KB
 # bodies, then BENCH_DECAY_S seconds of idle sampling (VmRSS/VmHWM at ~2 Hz,

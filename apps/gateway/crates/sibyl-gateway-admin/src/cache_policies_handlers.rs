@@ -1,10 +1,10 @@
 //! Read handlers for `/admin/v1/cache_policies`: list and get-by-id,
 //! same shape as [`crate::models_handlers`].
 
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::CachePolicy;
 use axum::extract::{Path, State};
 use axum::Json;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::CachePolicy;
 
 use crate::auth::AdminAuth;
 use crate::error::AdminError;

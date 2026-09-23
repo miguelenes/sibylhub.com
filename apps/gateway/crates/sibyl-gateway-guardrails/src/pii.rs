@@ -35,9 +35,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use regex::Regex;
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::{Guardrail, GuardrailVerdict, Redaction, StreamOutputPolicy};
 

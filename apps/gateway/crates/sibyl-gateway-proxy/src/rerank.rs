@@ -11,13 +11,13 @@
 //! be configured with a `base_url` pointing to their rerank endpoint root.
 //! The gateway appends `/v1/rerank`.
 
-use sibyl_gateway_core::AppliedGuardrail;
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::Value;
+use sibyl_gateway_core::AppliedGuardrail;
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use std::time::{Duration, Instant};
 
 use crate::auth::AuthenticatedKey;
@@ -423,7 +423,10 @@ async fn dispatch(
         if let Some(constraints) = &r.param_constraints {
             sibyl_gateway_provider_openai::overrides::apply_param_constraints(body, constraints);
         }
-        sibyl_gateway_provider_openai::overrides::apply_default_body_fields(body, &r.default_body_fields);
+        sibyl_gateway_provider_openai::overrides::apply_default_body_fields(
+            body,
+            &r.default_body_fields,
+        );
     }
 
     // The provider arm of `default_base_for_provider` is guaranteed to
@@ -878,13 +881,13 @@ fn emit_access_log(
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_provider_openai::OpenAiBridge;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_provider_openai::OpenAiBridge;
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{method, path};
@@ -976,7 +979,9 @@ mod tests {
     /// JSON and appends a `request` block; reuses `PK_ID` so the rerank model
     /// fixtures still reference it. Used to prove the resolved PK's request
     /// overrides reach the rerank upstream body + headers.
-    fn provider_key_entry_overrides(api_base: &str) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
+    fn provider_key_entry_overrides(
+        api_base: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
         let json = format!(
             r#"{{"display_name":"openai-up","secret":"sk-test","api_base":"{api_base}","provider":"openai","adapter":"openai","request":{{"default_body_fields":{{"safe_flag":true}},"default_headers":{{"x-custom":"trace-on"}}}}}}"#
         );

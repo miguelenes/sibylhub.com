@@ -10,9 +10,9 @@
 //! verdict carries the matching pattern text in `reason` so operators
 //! can debug from the access log.
 
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use regex::Regex;
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::{Guardrail, GuardrailVerdict};
 

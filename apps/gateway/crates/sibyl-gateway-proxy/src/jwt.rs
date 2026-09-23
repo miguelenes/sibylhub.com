@@ -60,12 +60,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::models::{BoundClaimExpect, ClaimMapping, ClaimMatch, ClaimMatchOp, OidcProvider};
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::{GatewaySnapshot, ApiKey};
 use base64::Engine;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
+use sibyl_gateway_core::models::{
+    BoundClaimExpect, ClaimMapping, ClaimMatch, ClaimMatchOp, OidcProvider,
+};
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::{ApiKey, GatewaySnapshot};
 
 use crate::auth::{AuthenticatedKey, JwtIdentity};
 use crate::error::ProxyError;
@@ -1391,8 +1393,8 @@ async fn fetch_json(url: &str) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_core::resource::ResourceEntry;
     use jsonwebtoken::{encode, EncodingKey, Header};
+    use sibyl_gateway_core::resource::ResourceEntry;
 
     struct FetchServer {
         url: String,

@@ -13,11 +13,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
-use sibyl_gateway_mcp::{
-    streamable_http_service, upstream_from_mcp_server, McpAuth, McpBridge, McpError, McpGateway,
-    McpProtocol, McpTool, McpToolResult, McpUpstream, RmcpBridge, ToolAcl,
-};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -27,6 +22,11 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleServer, ServerHandler, ServiceExt};
+use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
+use sibyl_gateway_mcp::{
+    streamable_http_service, upstream_from_mcp_server, McpAuth, McpBridge, McpError, McpGateway,
+    McpProtocol, McpTool, McpToolResult, McpUpstream, RmcpBridge, ToolAcl,
+};
 
 /// A real upstream MCP server exposing one `echo` tool that prefixes its reply
 /// with `label`, so the test can tell which upstream actually handled a call.
@@ -551,7 +551,8 @@ fn acl_key(json: serde_json::Value) -> sibyl_gateway_core::models::ApiKey {
 fn policy_snapshot(rows: &[(&str, serde_json::Value)]) -> GatewaySnapshot {
     let snapshot = GatewaySnapshot::new();
     for (id, doc) in rows {
-        let policy: sibyl_gateway_core::models::McpPolicy = serde_json::from_value(doc.clone()).unwrap();
+        let policy: sibyl_gateway_core::models::McpPolicy =
+            serde_json::from_value(doc.clone()).unwrap();
         snapshot
             .mcp_policies
             .insert(ResourceEntry::new(*id, policy, 1));
@@ -573,11 +574,12 @@ fn resolve_now(snapshot: &GatewaySnapshot, key: &sibyl_gateway_core::models::Api
 /// id-form ACL entry has something to resolve against.
 fn with_servers(snapshot: GatewaySnapshot, servers: &[(&str, &str)]) -> GatewaySnapshot {
     for (id, name) in servers {
-        let server: sibyl_gateway_core::models::McpServer = serde_json::from_value(serde_json::json!({
-            "name": name,
-            "url": "https://example.test/mcp",
-        }))
-        .unwrap();
+        let server: sibyl_gateway_core::models::McpServer =
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "url": "https://example.test/mcp",
+            }))
+            .unwrap();
         snapshot
             .mcp_servers
             .insert(ResourceEntry::new(*id, server, 1));

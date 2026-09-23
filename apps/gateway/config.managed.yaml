@@ -1,4 +1,8 @@
-# SibylHub Gateway gateway — managed-mode bootstrap configuration for AISIX Cloud.
+# SibylHub Gateway — managed-mode bootstrap configuration for the upstream AISIX Cloud compatibility surface.
+#
+# SibylHub operates no control plane. This file exists so a gateway joining an
+# external, pre-existing AISIX Cloud environment keeps booting; managed mode is
+# opt-in (`managed.enabled: true`) and dormant everywhere else.
 #
 # Baked into the official Docker image as `/etc/sibyl-gateway/config.managed.yaml`.
 # Select it by setting `SIBYL_GATEWAY_CONFIG_PATH` to that path.
@@ -173,8 +177,7 @@ observability:
   metrics:
     # Complete label lists per metric. Omitted metrics retain their defaults.
     # Restart after changing labels. [] removes all optional business labels;
-    # gauges retain required identity labels. See the variable reference:
-    # https://docs.api7.ai/ai-gateway/dev/reference/metric-labels
+    # gauges retain required identity labels. The variable reference is `crates/sibyl-gateway-obs/src/metric_labels.rs`:
     # Env: SIBYL_GATEWAY_OBSERVABILITY__METRICS__LABELS='{"sibyl_gateway_request_ttft_seconds":["provider_key_name","model"]}'
     # labels:
     #   sibyl_gateway_request_ttft_seconds:

@@ -448,9 +448,14 @@ async function spawnAppOnce(overrides: AppOverrides = {}): Promise<SpawnedApp> {
 
   // Strip SIBYL_GATEWAY_* env vars so they don't leak into the binary's
   // config loader (which treats SIBYL_GATEWAY_<KEY> as config overrides).
+  // Legacy AISIX_* vars are stripped too: the loader aliases them with a
+  // boot warning, and a spec must not inherit the runner's own env either
+  // way.
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && !k.startsWith("SIBYL_GATEWAY_")) childEnv[k] = v;
+    if (v !== undefined && !k.startsWith("SIBYL_GATEWAY_") && !k.startsWith("AISIX_")) {
+      childEnv[k] = v;
+    }
   }
   childEnv.RUST_LOG = overrides.logLevel ?? process.env.RUST_LOG ?? "warn";
   childEnv.HTTP_PROXY = "";

@@ -12,7 +12,7 @@ import {
   type SpawnedApp,
 } from "../harness/index.js";
 
-// E2E for AISIX-Cloud#1138 / api7/sibyl-gateway#457: a transcription billed by
+// E2E for AISIX-Cloud#1138 / api7/aisix#457: a transcription billed by
 // audio length must carry that length off the gateway.
 //
 // whisper-class models report `usage: {type: "duration", seconds: N}` and

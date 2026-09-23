@@ -166,9 +166,9 @@ fn background_status_code(err: &BridgeError) -> Option<u16> {
 mod tests {
     use super::*;
 
+    use reqwest::Client;
     use sibyl_gateway_core::resource::ResourceEntry;
     use sibyl_gateway_provider_openai::OpenAiBridge;
-    use reqwest::Client;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -204,7 +204,10 @@ mod tests {
         OpenAiBridge::with_client(client)
     }
 
-    fn provider_key_entry(id: &str, api_base: &str) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
+    fn provider_key_entry(
+        id: &str,
+        api_base: &str,
+    ) -> ResourceEntry<sibyl_gateway_core::ProviderKey> {
         let cfg = format!(
             r#"{{"display_name":"pk-{id}","secret":"sk-upstream","api_base":"{api_base}","provider":"openai","adapter":"openai"}}"#
         );

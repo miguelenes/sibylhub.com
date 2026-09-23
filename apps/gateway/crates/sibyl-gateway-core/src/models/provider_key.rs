@@ -308,7 +308,7 @@ impl UpstreamConnection {
     /// nothing must not split the connection pool, and must not lose the
     /// per-worker pool it would otherwise dispatch on.
     ///
-    /// [`client_for_provider_key`]: https://docs.rs/sibyl-gateway-gateway
+    /// [`client_for_provider_key`]: https://docs.rs/sibyl-gateway-hub
     pub fn is_noop(&self) -> bool {
         self.resolve.is_empty() && self.tls.as_ref().is_none_or(ProviderKeyTls::is_noop)
     }

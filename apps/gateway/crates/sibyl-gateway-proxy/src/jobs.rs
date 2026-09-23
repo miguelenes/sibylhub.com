@@ -50,10 +50,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::models::model::Adapter;
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::{Model, ProviderKey};
-use sibyl_gateway_obs::{AccessLog, UsageEvent};
 use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
@@ -62,6 +58,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use bytes::Bytes;
 use serde_json::Value;
+use sibyl_gateway_core::models::model::Adapter;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::{Model, ProviderKey};
+use sibyl_gateway_obs::{AccessLog, UsageEvent};
 
 use crate::auth::AuthenticatedKey;
 use crate::client_ip::ClientContext;
@@ -384,7 +384,10 @@ async fn send_upstream(
         headers.insert(auth_name, v);
     }
     if let Ok(v) = axum::http::HeaderValue::from_str(request_id) {
-        headers.insert(axum::http::HeaderName::from_static("x-sibylhub-request-id"), v);
+        headers.insert(
+            axum::http::HeaderName::from_static("x-sibylhub-request-id"),
+            v,
+        );
     }
     for (name, value) in &target.extra_headers {
         if !headers.contains_key(name) {
@@ -421,7 +424,9 @@ async fn send_upstream(
                 &state.runtime_status,
                 &target.model_entry.id,
                 target.model_entry.value.cooldown.as_ref(),
-                sibyl_gateway_hub::BridgeError::Transport(sibyl_gateway_hub::transport_error_message(&e)),
+                sibyl_gateway_hub::BridgeError::Transport(
+                    sibyl_gateway_hub::transport_error_message(&e),
+                ),
             )
         })
         .map_err(ProxyError::Bridge)?;
@@ -482,7 +487,8 @@ async fn scan_input_blob(
         target.display_name(),
         vec![sibyl_gateway_hub::ChatMessage::user(text.into_owned())],
     );
-    let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_input_observed(&chain, &chat).await;
+    let (verdict, hits) =
+        sibyl_gateway_guardrails::Guardrail::check_input_observed(&chain, &chat).await;
     monitor_hits.extend(hits);
     // Drained BEFORE the block branch: a `blocked` hit is exactly the one
     // that leaves through `Err`, and the caller's `?` would drop it.
@@ -547,11 +553,14 @@ async fn scan_output_blob(
     let synth = sibyl_gateway_hub::ChatResponse {
         id: String::new(),
         model: target.display_name().to_string(),
-        message: sibyl_gateway_hub::ChatMessage::assistant(String::from_utf8_lossy(blob).into_owned()),
+        message: sibyl_gateway_hub::ChatMessage::assistant(
+            String::from_utf8_lossy(blob).into_owned(),
+        ),
         finish_reason: sibyl_gateway_hub::FinishReason::Stop,
         usage: sibyl_gateway_hub::UsageStats::default(),
     };
-    let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_output_observed(&chain, &synth).await;
+    let (verdict, hits) =
+        sibyl_gateway_guardrails::Guardrail::check_output_observed(&chain, &synth).await;
     monitor_hits.extend(hits);
     // See `scan_input_blob`.
     enforced_hits.extend(chain.enforced_hits());
@@ -2091,13 +2100,13 @@ async fn attribute_batch_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_core::resource::ResourceEntry;
-    use sibyl_gateway_core::snapshot::SnapshotHandle;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, Model, ProxyConfig};
-    use sibyl_gateway_hub::Hub;
-    use sibyl_gateway_obs::{UsageEvent as ObsUsageEvent, UsageSink};
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
+    use sibyl_gateway_core::resource::ResourceEntry;
+    use sibyl_gateway_core::snapshot::SnapshotHandle;
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, Model, ProxyConfig};
+    use sibyl_gateway_hub::Hub;
+    use sibyl_gateway_obs::{UsageEvent as ObsUsageEvent, UsageSink};
     use std::sync::Arc;
     use tower::ServiceExt;
     use wiremock::matchers::{method as wm_method, path, query_param};

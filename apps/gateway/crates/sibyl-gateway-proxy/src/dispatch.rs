@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::{GatewaySnapshot, ApiSurface, Model, ProviderKey};
+use sibyl_gateway_core::{ApiSurface, GatewaySnapshot, Model, ProviderKey};
 use sibyl_gateway_hub::{Bridge, BridgeError, Hub};
 
 /// Map a `reqwest` transport error from a raw-passthrough dispatch
@@ -236,7 +236,9 @@ pub(crate) fn serves_natively(
         Some(sibyl_gateway_core::Adapter::Bedrock)
         | Some(sibyl_gateway_core::Adapter::Vertex)
         | Some(sibyl_gateway_core::Adapter::AzureOpenai) => true,
-        Some(sibyl_gateway_core::Adapter::Openai) | Some(sibyl_gateway_core::Adapter::Anthropic) | None => false,
+        Some(sibyl_gateway_core::Adapter::Openai)
+        | Some(sibyl_gateway_core::Adapter::Anthropic)
+        | None => false,
     });
     if platform {
         return false;
@@ -1577,13 +1579,13 @@ mod tests {
 
     mod resolve_bridge_tests {
         use super::*;
+        use async_trait::async_trait;
+        use futures::stream;
         use sibyl_gateway_core::models::Adapter;
         use sibyl_gateway_hub::{
             Bridge, BridgeContext, BridgeError, ChatChunkStream, ChatFormat, ChatMessage,
             ChatResponse, EmbeddingRequest, EmbeddingResponse, FinishReason, Hub, UsageStats,
         };
-        use async_trait::async_trait;
-        use futures::stream;
 
         /// Minimal Bridge that records its identity via `name()`. Lets
         /// resolve_bridge tests verify which Bridge was returned without

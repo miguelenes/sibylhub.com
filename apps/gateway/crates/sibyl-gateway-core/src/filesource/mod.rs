@@ -381,7 +381,10 @@ fn model_ref_id_field(kind: &str, doc: &mut Value) -> Option<&'static ModelRefId
 /// interpolation against the current process environment. `revision` is
 /// stamped on every entry (the file source's generation counter: 1 at
 /// boot, incremented per successful reload).
-pub fn load_resources_file(path: &Path, revision: i64) -> Result<GatewaySnapshot, FileSourceErrors> {
+pub fn load_resources_file(
+    path: &Path,
+    revision: i64,
+) -> Result<GatewaySnapshot, FileSourceErrors> {
     let label = path.display().to_string();
     let contents = std::fs::read_to_string(path).map_err(|e| FileSourceErrors {
         file: label.clone(),

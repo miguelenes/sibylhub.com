@@ -2226,7 +2226,10 @@ mod tests {
         // Same entries, different insertion order + key order + whitespace.
         let b = hash_entries([
             ("/sibyl-gateway/models/m2", br#"{"x":"y"}"#.as_slice()),
-            ("/sibyl-gateway/models/m1", br#"{ "a":2, "b":1 }"#.as_slice()),
+            (
+                "/sibyl-gateway/models/m1",
+                br#"{ "a":2, "b":1 }"#.as_slice(),
+            ),
         ]);
         assert_eq!(a, b, "hash must be canonical over key order and whitespace");
     }
@@ -2304,12 +2307,12 @@ mod tests {
         ),
     ];
     const HASH_FIXTURE_ALL: &str =
-        "19ad332bd0ec12bd419a56786f81ca90b17d9796ac60f46545b9f77642427129";
+        "c78697400dd9ea12cf4bd28c4c6b59d36b8db60def643a2be64ae92de8f86dbc";
     /// The same fixture minus `/sibyl-gateway/env/models/z` — the shape
     /// `config_hash` takes when a key is rejected with nothing to serve,
     /// so the two digests differ.
     const HASH_FIXTURE_ACCEPTED: &str =
-        "f0b4b0cdc9ae4da988e11b3e64b47e802212859e6ed2d08b64434967a9d41308";
+        "32f8eca07932acf41973989b1852a39118d69267c9fe123750d4c0765caca302";
 
     #[test]
     fn hash_backend_matches_sha256_across_chunk_boundaries() {

@@ -4,10 +4,10 @@
 //! the write path only — no `*`) live in the canonical schema,
 //! enforced on every declarative write path.
 
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::McpServer;
 use axum::extract::{Path, State};
 use axum::Json;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::McpServer;
 
 use crate::auth::AdminAuth;
 use crate::error::AdminError;

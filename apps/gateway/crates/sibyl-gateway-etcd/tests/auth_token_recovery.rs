@@ -35,7 +35,7 @@
 //! refuses a token for it.
 //!
 //! The container and short-TTL cluster this needs were built by community
-//! PR api7/sibyl-gateway#763 (`okaybase`), which proposed the scheduled-refresh
+//! PR api7/aisix#763 (`okaybase`), which proposed the scheduled-refresh
 //! fix these tests replace.
 
 #![allow(clippy::expect_used)]
@@ -43,8 +43,8 @@
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use sibyl_gateway_etcd::{ConfigProvider, EtcdConfigProvider, ProviderError};
 use etcd_client::ConnectOptions;
+use sibyl_gateway_etcd::{ConfigProvider, EtcdConfigProvider, ProviderError};
 
 /// Two tests here change the cluster's auth store, which stales every
 /// token every other test in this file is holding, so they take turns.

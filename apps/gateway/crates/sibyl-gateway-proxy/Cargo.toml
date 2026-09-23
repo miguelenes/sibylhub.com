@@ -11,7 +11,7 @@ description = "sibyl-gateway: /v1/* proxy router (OpenAI-compatible) + middlewar
 [dependencies]
 sibyl-gateway-a2a = { path = "../sibyl-gateway-a2a" }
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 # Mounts the downstream-facing `/mcp` MCP gateway endpoint (mcp.rs): the
 # proxy builds an `McpGateway` from the snapshot's `mcp_servers` per request.
 sibyl-gateway-mcp = { path = "../sibyl-gateway-mcp" }

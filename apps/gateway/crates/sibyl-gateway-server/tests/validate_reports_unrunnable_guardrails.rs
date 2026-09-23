@@ -25,7 +25,7 @@ fn validate(body: &str) -> (bool, String, String) {
     file.write_all(body.as_bytes()).expect("write");
     file.flush().expect("flush");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_aisix"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sibyl-gateway"))
         .args(["validate", "--resources"])
         .arg(file.path())
         .output()

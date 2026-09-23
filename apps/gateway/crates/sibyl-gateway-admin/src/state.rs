@@ -9,11 +9,11 @@
 //! wire an etcd-backed impl and tests can use `InMemoryStore` via the
 //! same type.
 
+use axum::Router;
 use sibyl_gateway_core::snapshot::SnapshotHandle;
 use sibyl_gateway_core::{AdminConfig, GatewaySnapshot};
 use sibyl_gateway_etcd::WatchStatus;
 use sibyl_gateway_proxy::{HealthTracker, LivezState, ModelRuntimeStatusTracker};
-use axum::Router;
 use std::sync::Arc;
 
 use crate::store::ConfigStore;

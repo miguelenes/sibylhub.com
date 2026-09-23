@@ -25,8 +25,8 @@
 //! Closes the dispatch half of api7/AISIX-Cloud#302 Phase A and the
 //! routing half of api7/AISIX-Cloud#417.
 
-use sibyl_gateway_core::models::{Adapter, ProviderKey};
 use dashmap::DashMap;
+use sibyl_gateway_core::models::{Adapter, ProviderKey};
 use std::sync::Arc;
 
 use crate::bridge::Bridge;

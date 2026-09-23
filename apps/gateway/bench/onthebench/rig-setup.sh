@@ -8,7 +8,7 @@
 # The load generator (otb) and the mock upstream are the PREBUILT, PINNED
 # instruments from the public onthebench benchmark rig release — the same
 # binaries every entrant on the public board is measured with, and the same
-# "otb loadgen" used for the api7/sibyl-gateway#891 and #902 tables. The engine pin
+# "otb loadgen" used for the api7/aisix#891 and #902 tables. The engine pin
 # behind the release tag is commit f3adbb1315b26129f5e317af5279decefb1cea8f
 # (tag engine-v1) of https://github.com/GetBusbar/benchmarking; the sha256s
 # below freeze the exact bytes so a re-provisioned rig either gets the

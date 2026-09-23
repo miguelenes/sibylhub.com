@@ -5,7 +5,7 @@
 # /etc/sibyl-gateway/config.yaml). Two intended modes:
 #
 #   Standalone — operator mounts their own config:
-#       docker run -v ./config.yaml:/etc/sibyl-gateway/config.yaml ghcr.io/api7/sibyl-gateway:dev
+#       docker run -v ./config.yaml:/etc/sibyl-gateway/config.yaml ghcr.io/sibylhub/gateway:dev
 #
 #   Managed (connected to AISIX Cloud) — use the baked-in template + env vars:
 #       docker run \
@@ -16,7 +16,7 @@
 #         -e SIBYL_GATEWAY_MANAGED__CP_KEY_PEM \
 #         -e SIBYL_GATEWAY_MANAGED__CP_CA_PEM \
 #         -v sibyl-gateway-mtls:/var/lib/sibyl-gateway \
-#         ghcr.io/api7/sibyl-gateway:dev
+#         ghcr.io/sibylhub/gateway:dev
 # The volume preserves the materialized mTLS bundle and gateway identity across
 # container restarts.
 #

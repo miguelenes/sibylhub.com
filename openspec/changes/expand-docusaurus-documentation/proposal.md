@@ -40,7 +40,10 @@ dependency or remote side effect.
   or project-code execution is required to build the site.
 - Describe the audited Rosie/FastMCP and edge-gateway boundary only to the
   extent supported by repository evidence, clearly distinguishing current
-  contracts from unavailable or planned first-party runtime sources.
+  contracts from unavailable or planned first-party runtime sources. The
+  SibylHub Gateway (`apps/gateway`) is an integrated first-party application
+  with its own documentation scope; the boundary page must not present
+  Rosie/FastMCP execution as implemented when it is not.
 
 ## Capabilities
 

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use sibyl_gateway_core::ManagedConfig;
 use anyhow::{bail, Context};
+use sibyl_gateway_core::ManagedConfig;
 
 /// True when the mTLS bundle is already on disk.
 pub fn bundle_exists(mtls_dir: impl AsRef<Path>) -> bool {

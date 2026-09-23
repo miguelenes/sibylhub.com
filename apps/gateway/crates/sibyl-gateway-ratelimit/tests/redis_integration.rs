@@ -1016,7 +1016,10 @@ fn a_refused_credential_is_told_apart_from_an_outage() {
         "no connection within 5s".to_string(),
     ));
     assert!(!sibyl_gateway_redis::is_boot_fatal(&unreachable));
-    assert_eq!(sibyl_gateway_redis::failure_reason(&unreachable), "unreachable");
+    assert_eq!(
+        sibyl_gateway_redis::failure_reason(&unreachable),
+        "unreachable"
+    );
 }
 
 /// The whole point of degrading rather than exiting: the credential is

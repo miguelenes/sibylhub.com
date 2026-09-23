@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use sibyl_gateway_core::{McpAuthType, McpServer};
 use async_trait::async_trait;
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResponse, ClientInfo, ProtocolVersion};
@@ -25,6 +24,7 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ClientCacheConfig;
 use rmcp::{ClientLifecycleMode, ClientServiceExt};
+use sibyl_gateway_core::{McpAuthType, McpServer};
 
 use crate::error::McpError;
 

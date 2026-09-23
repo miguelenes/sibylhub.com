@@ -7,10 +7,10 @@
 //! or lookup fails the request is short-circuited with a 401 envelope
 //! before the handler runs.
 
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::ApiKey;
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::ApiKey;
 use std::sync::Arc;
 
 use crate::error::ProxyError;

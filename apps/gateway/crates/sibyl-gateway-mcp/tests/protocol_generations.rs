@@ -23,10 +23,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use sibyl_gateway_mcp::{streamable_http_service, McpBridge, McpError, McpGateway, McpTool, McpToolResult};
 use rmcp::model::{CallToolRequestParams, ClientInfo, ProtocolVersion};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{ClientLifecycleMode, ClientServiceExt, ServiceExt};
+use sibyl_gateway_mcp::{
+    streamable_http_service, McpBridge, McpError, McpGateway, McpTool, McpToolResult,
+};
 
 /// A self-contained upstream: one `echo` tool, no network. The generation
 /// tests exercise the DOWNSTREAM protocol surface; a live upstream session
@@ -498,9 +500,9 @@ async fn modern_client_through_real_bridge_and_upstream() {
     });
 
     // Gateway fronting it through the production bridge type.
-    let bridge = sibyl_gateway_mcp::EphemeralBridge::new(sibyl_gateway_mcp::McpUpstream::new(format!(
-        "http://{upstream_addr}/mcp"
-    )));
+    let bridge = sibyl_gateway_mcp::EphemeralBridge::new(sibyl_gateway_mcp::McpUpstream::new(
+        format!("http://{upstream_addr}/mcp"),
+    ));
     let gateway = McpGateway::new([("alpha".to_string(), Arc::new(bridge) as Arc<dyn McpBridge>)]);
     let app = axum::Router::new().nest_service("/mcp", streamable_http_service(gateway, 0));
     let gw_listener = tokio::net::TcpListener::bind("127.0.0.1:0")

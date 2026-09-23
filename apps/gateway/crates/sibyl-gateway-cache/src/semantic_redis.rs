@@ -29,12 +29,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
+use dashmap::DashMap;
 use sibyl_gateway_core::RedisConnConfig;
 use sibyl_gateway_hub::ChatResponse;
 use sibyl_gateway_obs::metrics::Metrics;
 use sibyl_gateway_redis::RedisConn;
-use async_trait::async_trait;
-use dashmap::DashMap;
 
 use crate::cache::CacheError;
 use crate::semantic::{SemanticCacheStore, SemanticHit};

@@ -14,7 +14,7 @@ use sibyl_gateway_core::resource::Resource;
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::snapshot::{ResourceTable, SnapshotHandle};
 use sibyl_gateway_core::{
-    A2aAgent, GatewaySnapshot, ApiKey, CachePolicy, Guardrail, McpServer, Model,
+    A2aAgent, ApiKey, CachePolicy, GatewaySnapshot, Guardrail, McpServer, Model,
     ObservabilityExporter, PassthroughRoute, ProviderKey,
 };
 

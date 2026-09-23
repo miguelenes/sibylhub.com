@@ -16,10 +16,10 @@
 //! The trait is deliberately `async_trait` rather than GATs — ergonomic
 //! wins outweigh the boxing cost on the provider path.
 
-use sibyl_gateway_core::{HeaderVars, Model, ProviderKey};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use http::HeaderMap;
+use sibyl_gateway_core::{HeaderVars, Model, ProviderKey};
 use std::time::Duration;
 
 use crate::chat::{ChatChunk, ChatFormat, ChatResponse, EmbeddingRequest, EmbeddingResponse};

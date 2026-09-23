@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use sibyl_gateway_core::{resource::ResourceEntry, snapshot::ResourceTable, ApiKey};
 use arc_swap::ArcSwapOption;
+use sibyl_gateway_core::{resource::ResourceEntry, snapshot::ResourceTable, ApiKey};
 
 type Entry = Arc<ResourceEntry<ApiKey>>;
 

@@ -31,7 +31,7 @@ sibyl-gateway-obs = { path = "../sibyl-gateway-obs" }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 testcontainers.workspace = true
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 sibyl-gateway-provider-openai = { path = "../sibyl-gateway-provider-openai" }
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
 wiremock.workspace = true

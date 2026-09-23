@@ -14,11 +14,6 @@
 //! `OpenAiBridge` and reuses the helpers from
 //! `sibyl_gateway_provider_openai::overrides`.
 
-use sibyl_gateway_core::{RequestOverrides, ResponseOverrides, StreamDoneMarker};
-use sibyl_gateway_hub::{
-    apply_request_headers, Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream,
-    ChatFormat, ChatResponse, SseDecoder, SseEvent, UpstreamHeaderContext,
-};
 use async_trait::async_trait;
 use futures::StreamExt;
 use http::{
@@ -27,6 +22,11 @@ use http::{
 };
 use reqwest::{header, Client, StatusCode};
 use serde_json::Value;
+use sibyl_gateway_core::{RequestOverrides, ResponseOverrides, StreamDoneMarker};
+use sibyl_gateway_hub::{
+    apply_request_headers, Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream,
+    ChatFormat, ChatResponse, SseDecoder, SseEvent, UpstreamHeaderContext,
+};
 use std::time::{Duration, Instant};
 
 use sibyl_gateway_provider_openai::close_strict_response_format_schema;
@@ -495,7 +495,8 @@ async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> BridgeEr
     let retry_after = sibyl_gateway_hub::parse_retry_after(resp.headers());
     let is_json = sibyl_gateway_hub::response_is_json(&resp);
     let body =
-        sibyl_gateway_hub::read_body_capped(resp, sibyl_gateway_hub::MAX_UPSTREAM_ERROR_BODY_BYTES).await;
+        sibyl_gateway_hub::read_body_capped(resp, sibyl_gateway_hub::MAX_UPSTREAM_ERROR_BODY_BYTES)
+            .await;
     // Skip the serde parse on non-JSON bodies (HTML error page from a
     // load-balancer / front door). Same guard as
     // `capture_upstream_error_http`.
@@ -936,8 +937,11 @@ fn parse_stream_chunk(
         // A frame that isn't a chunk may be Azure reporting an error
         // inside the 200 stream (`{"error":{...}}`) — surface the
         // provider's own error instead of the serde failure.
-        sibyl_gateway_hub::capture_in_band_error(payload, sibyl_gateway_hub::UpstreamWire::AzureOpenAI)
-            .unwrap_or(BridgeError::UpstreamDecode(serde_err))
+        sibyl_gateway_hub::capture_in_band_error(
+            payload,
+            sibyl_gateway_hub::UpstreamWire::AzureOpenAI,
+        )
+        .unwrap_or(BridgeError::UpstreamDecode(serde_err))
     })
 }
 

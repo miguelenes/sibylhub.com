@@ -17,7 +17,9 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use sibyl_gateway_core::models::{resolve_model_ref, EmbeddingFailureMode, OnEmbeddingFailure, Semantic};
+use sibyl_gateway_core::models::{
+    resolve_model_ref, EmbeddingFailureMode, OnEmbeddingFailure, Semantic,
+};
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::{GatewaySnapshot, Model};
 use sibyl_gateway_hub::{EmbeddingRequest, EmbeddingVector};

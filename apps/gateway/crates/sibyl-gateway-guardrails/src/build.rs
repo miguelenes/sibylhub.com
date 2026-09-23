@@ -14,15 +14,15 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use sibyl_gateway_core::models::{
-    GatewaySnapshot, AppliedGuardrail, Guardrail as DomainGuardrail, GuardrailAttachment,
+    AppliedGuardrail, GatewaySnapshot, Guardrail as DomainGuardrail, GuardrailAttachment,
     GuardrailHookPoint, GuardrailInputMessages, GuardrailKind, GuardrailMonitorHit,
     GuardrailScopeType, KeywordPattern,
 };
 use sibyl_gateway_core::snapshot::ResourceTable;
 use sibyl_gateway_core::{ConfigStatus, IncomingRejection, SnapshotHandle};
 use sibyl_gateway_hub::{ChatFormat, ChatResponse};
-use async_trait::async_trait;
 
 use crate::index::{GuardrailIndex, RequestContext, ScopeKind};
 use crate::keyword::{KeywordBlocklist, KeywordRule};
@@ -2015,7 +2015,10 @@ mod tests {
         struct ErrorTypes(std::sync::Mutex<Vec<Option<String>>>);
 
         impl sibyl_gateway_core::GuardrailMetricsSink for ErrorTypes {
-            fn record_guardrail_execution(&self, exec: &sibyl_gateway_core::GuardrailExecution<'_>) {
+            fn record_guardrail_execution(
+                &self,
+                exec: &sibyl_gateway_core::GuardrailExecution<'_>,
+            ) {
                 self.0
                     .lock()
                     .unwrap()

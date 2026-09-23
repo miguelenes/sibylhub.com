@@ -215,11 +215,13 @@ cargo run -p sibyl-gateway-admin --bin dump-openapi > /tmp/admin-api.openapi.jso
 CI runs the resource-schema drift check and the Admin API OpenAPI
 generation check.
 
-Release builds publish the Admin API OpenAPI document to
+Release builds are expected to publish the Admin API OpenAPI document as
 `/ai-gateway/openapi-<version>.json` and `/ai-gateway/openapi-latest.json`
-on the configured `run.api7.ai` bucket. Main-branch builds publish
-`/ai-gateway/openapi-dev.json` when the S3 and CloudFront secrets are
-configured in the repository.
+to an object-storage location configured at deployment time; main-branch
+builds publish `/ai-gateway/openapi-dev.json` when the corresponding
+storage secrets are configured in the repository. No SibylHub publication
+target is configured yet — treat this as a planned distribution step, not
+an active one.
 
 ## Downstream consumers
 

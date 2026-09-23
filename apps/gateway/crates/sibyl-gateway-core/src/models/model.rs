@@ -550,7 +550,7 @@ fn model_one_of_variant(strict: bool) -> Value {
     if strict {
         let arr = variants.as_array_mut().expect("oneOf array");
         // routing: the group slot for timeouts is the top-level pair
-        // (api7/sibyl-gateway#844); retries' group slot is `routing.retries`, so a
+        // (api7/aisix#844); retries' group slot is `routing.retries`, so a
         // top-level value is dead — as are the model-specific knobs.
         extend(
             &mut arr[0],

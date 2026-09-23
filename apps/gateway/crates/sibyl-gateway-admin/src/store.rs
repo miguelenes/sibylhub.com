@@ -7,12 +7,12 @@
 //! tests use [`InMemoryStore`], which keeps `#[cfg(test)]` inherent
 //! write methods for seeding.
 
+use dashmap::DashMap;
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::{
     A2aAgent, ApiKey, CachePolicy, Guardrail, McpServer, Model, ObservabilityExporter,
     PassthroughRoute, ProviderKey,
 };
-use dashmap::DashMap;
 use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]

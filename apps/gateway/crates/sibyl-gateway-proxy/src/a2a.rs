@@ -37,16 +37,16 @@
 
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_a2a::{
-    canonical_operation, is_stream_end, is_streaming_operation, request_text,
-    upstream_from_a2a_agent, A2aBridge, A2aCallFacts, A2aError, HttpBridge, ResultText,
-};
-use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 use axum::body::to_bytes;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
+use sibyl_gateway_a2a::{
+    canonical_operation, is_stream_end, is_streaming_operation, request_text,
+    upstream_from_a2a_agent, A2aBridge, A2aCallFacts, A2aError, HttpBridge, ResultText,
+};
+use sibyl_gateway_obs::{content_capture_cap, AccessLog, CapturedContent, UsageEvent};
 
 use crate::auth::AuthenticatedKey;
 use crate::reject::GatewayPath;
@@ -326,15 +326,16 @@ async fn dispatch(
     // endpoint used to run no chain at all, so an operator's env-wide
     // policy was a no-op the moment a caller switched from `/v1/*` to
     // `/a2a/*` with the same key.
-    let guardrail_chain = state
-        .guardrail_index
-        .resolve(&sibyl_gateway_guardrails::RequestContext {
-            passthrough_route_id: "",
-            model_id: "",
-            mcp_server_id: "",
-            api_key_id: &auth.entry.id,
-            team_id: auth.key().team_id.as_deref(),
-        });
+    let guardrail_chain =
+        state
+            .guardrail_index
+            .resolve(&sibyl_gateway_guardrails::RequestContext {
+                passthrough_route_id: "",
+                model_id: "",
+                mcp_server_id: "",
+                api_key_id: &auth.entry.id,
+                team_id: auth.key().team_id.as_deref(),
+            });
     call.applied_guardrails = guardrail_chain.applied().to_vec();
     call.guardrail_audit = guardrail_chain.audit_log();
     if let Some(response) = guardrail_block_response(
@@ -817,7 +818,8 @@ async fn guardrail_block_response(
         A2A_MODEL_LABEL,
         vec![sibyl_gateway_hub::ChatMessage::user(text)],
     );
-    let (verdict, hits) = sibyl_gateway_guardrails::Guardrail::check_input_observed(chain, &chat).await;
+    let (verdict, hits) =
+        sibyl_gateway_guardrails::Guardrail::check_input_observed(chain, &chat).await;
     call.guardrail_monitor_hits.extend(hits);
     let sibyl_gateway_guardrails::GuardrailVerdict::Block {
         reason,
@@ -1335,7 +1337,10 @@ mod tests {
 
     /// Drive one A2A request through the real router and return the usage
     /// event it emitted.
-    async fn usage_event_for(agent_url: &str, body: serde_json::Value) -> sibyl_gateway_obs::UsageEvent {
+    async fn usage_event_for(
+        agent_url: &str,
+        body: serde_json::Value,
+    ) -> sibyl_gateway_obs::UsageEvent {
         use sibyl_gateway_obs::UsageSink;
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
@@ -1488,8 +1493,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_stream_abandoned_mid_task_records_the_last_state_seen() {
-        use sibyl_gateway_obs::UsageSink;
         use futures::StreamExt;
+        use sibyl_gateway_obs::UsageSink;
 
         // The claim is that no terminal state is invented for a task the
         // caller stopped watching. The agent reports `submitted` then
@@ -1580,8 +1585,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_completed_task_is_not_recorded_as_abandoned() {
-        use sibyl_gateway_obs::UsageSink;
         use futures::StreamExt;
+        use sibyl_gateway_obs::UsageSink;
 
         // An A2A client stops reading at the terminal event; the agent may
         // hold the connection open long after. Waiting for the upstream to
@@ -1977,9 +1982,11 @@ mod tests {
 
     // ---- endpoint integration tests: drive the real router via oneshot ----
     use crate::build_router;
-    use sibyl_gateway_core::{A2aAgent, GatewaySnapshot, ApiKey, ProxyConfig, ResourceEntry, SnapshotHandle};
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
+    use sibyl_gateway_core::{
+        A2aAgent, ApiKey, GatewaySnapshot, ProxyConfig, ResourceEntry, SnapshotHandle,
+    };
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -2163,7 +2170,10 @@ mod tests {
         let card: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // The advertised service URL is rewritten to the gateway; the caller's
         // Host is reflected and every other card field is preserved.
-        assert_eq!(card["url"], "https://a2a.sibyl-gateway.example.com/a2a/invoice");
+        assert_eq!(
+            card["url"],
+            "https://a2a.sibyl-gateway.example.com/a2a/invoice"
+        );
         assert_eq!(card["name"], "Invoice Agent");
         assert_eq!(card["version"], "2.1.0");
         assert_eq!(card["skills"][0]["id"], "extract");

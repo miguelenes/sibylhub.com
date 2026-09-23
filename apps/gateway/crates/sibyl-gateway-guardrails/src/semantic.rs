@@ -81,10 +81,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use sibyl_gateway_core::best_similarity_by;
 use sibyl_gateway_core::models::{GuardrailHookPoint, GuardrailScore, SemanticConfig};
 use sibyl_gateway_hub::{ChatFormat, ChatResponse, Role};
-use async_trait::async_trait;
 
 use crate::{
     EmbedFailure, Guardrail, GuardrailAuditLog, GuardrailEmbedder, GuardrailVerdict,

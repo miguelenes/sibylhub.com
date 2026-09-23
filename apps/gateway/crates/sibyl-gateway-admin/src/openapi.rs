@@ -38,7 +38,7 @@ const OPENAPI_JSON_BASE: &str = r##"{
   "info": {
     "title": "SibylHub Gateway Admin API",
     "version": "dev",
-    "description": "The SibylHub Gateway Admin API is the read-only operational surface of an open-source SibylHub Gateway gateway: list and inspect the loaded models, caller API keys, provider credentials, guardrails, MCP servers, A2A agents, cache policies, and observability exporters, check per-model upstream health, and drive the playground.\n\nResource write endpoints were removed in favor of declarative configuration: declare resources in a `resources_file` (`resources.yaml`) and reload with SIGHUP, or write them to etcd directly. See the resources file reference at https://docs.api7.ai/ai-gateway/reference/resources-file.\n\nGateways connected to AISIX Cloud do not expose this listener. Configure them through AISIX Cloud."
+    "description": "The SibylHub Gateway Admin API is the read-only operational surface of the SibylHub Gateway: list and inspect the loaded models, caller API keys, provider credentials, guardrails, MCP servers, A2A agents, cache policies, and observability exporters, check per-model upstream health, and drive the playground.\n\nResource write endpoints were removed in favor of declarative configuration: declare resources in a `resources_file` (`resources.yaml`) and reload with SIGHUP, or write them to etcd directly.\n\nManaged mode is a compatibility surface for an external upstream control plane; a gateway running under it does not expose this listener, and SibylHub does not operate such a control plane."
   },
   "paths": {
     "/livez": {

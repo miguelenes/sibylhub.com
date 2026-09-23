@@ -21,10 +21,10 @@
 //! - Standard SA JSON shape: emitted verbatim by
 //!   `gcloud iam service-accounts keys create`.
 
-use sibyl_gateway_hub::{credential_fingerprint, BridgeError};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sibyl_gateway_hub::{credential_fingerprint, BridgeError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

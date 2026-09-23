@@ -45,13 +45,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sibyl_gateway_core::models::{AliyunTextModerationConfig, GuardrailHookPoint};
-use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 use async_trait::async_trait;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha1::Sha1;
+use sibyl_gateway_core::models::{AliyunTextModerationConfig, GuardrailHookPoint};
+use sibyl_gateway_hub::{ChatFormat, ChatResponse};
 
 use crate::chunk::chunk_text;
 use crate::{Guardrail, GuardrailVerdict, StreamOutputPolicy};
@@ -769,8 +769,8 @@ fn collect_input_text(req: &ChatFormat) -> String {
 
 #[cfg(test)]
 mod tests {
-    use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
     use serde_json::json;
+    use sibyl_gateway_hub::{ChatFormat, ChatMessage, ChatResponse, FinishReason, UsageStats};
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

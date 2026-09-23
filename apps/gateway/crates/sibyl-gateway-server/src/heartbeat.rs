@@ -31,11 +31,11 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use anyhow::{anyhow, Context};
+use serde::Serialize;
 use sibyl_gateway_core::ConfigRejectionSnapshot;
 use sibyl_gateway_etcd::loader::PartialCompatEntry;
 use sibyl_gateway_obs::SinkStatsSnapshot;
-use anyhow::{anyhow, Context};
-use serde::Serialize;
 use tokio::sync::watch;
 
 /// Build identity reported to cp-api (heartbeat `version` field + HTTP
@@ -48,7 +48,10 @@ use tokio::sync::watch;
 /// `dpmgr_nodes.dp_version`, replacing the `"pending"` placeholder it
 /// wrote at install-command time.
 pub static BUILD_VERSION: LazyLock<String> = LazyLock::new(|| {
-    format_build_version(sibyl_gateway_core::BUILD_VERSION, option_env!("SIBYL_GATEWAY_BUILD_SHA"))
+    format_build_version(
+        sibyl_gateway_core::BUILD_VERSION,
+        option_env!("SIBYL_GATEWAY_BUILD_SHA"),
+    )
 });
 
 fn format_build_version(pkg_version: &str, build_sha: Option<&str>) -> String {

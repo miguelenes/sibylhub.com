@@ -16,16 +16,16 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use dashmap::DashSet;
 use sibyl_gateway_cache::{Cache, MemoryCache, MemorySemanticCache, SemanticCacheStore};
 use sibyl_gateway_core::models::CacheBackend;
 use sibyl_gateway_core::models::{LiveMcpServerIndex, LivePricingIndex};
 use sibyl_gateway_core::snapshot::SnapshotHandle;
 use sibyl_gateway_core::{GatewaySnapshot, ProxyConfig};
-use sibyl_gateway_hub::Hub;
 use sibyl_gateway_guardrails::LiveGuardrailIndex;
+use sibyl_gateway_hub::Hub;
 use sibyl_gateway_obs::{ClientTypeClassifier, Metrics, OtlpHttpFanOut, UsageSink};
 use sibyl_gateway_ratelimit::Limiter;
-use dashmap::DashSet;
 use std::sync::Arc;
 
 use crate::budget::BudgetClient;
@@ -384,7 +384,11 @@ impl ProxyState {
 }
 
 impl ProxyState {
-    pub fn new(snapshot: SnapshotHandle<GatewaySnapshot>, hub: Arc<Hub>, cfg: &ProxyConfig) -> Self {
+    pub fn new(
+        snapshot: SnapshotHandle<GatewaySnapshot>,
+        hub: Arc<Hub>,
+        cfg: &ProxyConfig,
+    ) -> Self {
         let metrics = Arc::new(Metrics::new(false));
         let semantic_cache = Arc::new(crate::semantic::SemanticVectorCache::default());
         let guardrail_index = LiveGuardrailIndex::new_with_sink(
@@ -403,9 +407,9 @@ impl ProxyState {
         // `ProxyState::new` (e.g. sibyl-gateway-admin's playground) compile the
         // system-clock arm.
         #[cfg(test)]
-        let limiter = Arc::new(Limiter::local_with_clock(sibyl_gateway_ratelimit::TestClock::new(
-            TEST_RATE_LIMIT_CLOCK_SECS,
-        )));
+        let limiter = Arc::new(Limiter::local_with_clock(
+            sibyl_gateway_ratelimit::TestClock::new(TEST_RATE_LIMIT_CLOCK_SECS),
+        ));
         #[cfg(not(test))]
         let limiter = Arc::new(Limiter::new());
         let fan_out = OtlpHttpFanOut::with_metrics((*metrics).clone());

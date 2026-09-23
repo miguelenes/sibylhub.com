@@ -14,17 +14,19 @@
 //! Error mapping is identical to OpenAi — the `BridgeError` contract from
 //! PR #6 applies verbatim.
 
+use async_trait::async_trait;
+use futures::StreamExt;
+use reqwest::{header, Client, StatusCode};
 use sibyl_gateway_hub::url_cache::cached_endpoint_url;
 use sibyl_gateway_hub::{
     Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream, ChatFormat, ChatResponse,
     SseDecoder, SseEvent,
 };
-use async_trait::async_trait;
-use futures::StreamExt;
-use reqwest::{header, Client, StatusCode};
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_hub::structured_output::{response_into_fake_stream_chunks, unwrap_json_tool_call};
+use sibyl_gateway_hub::structured_output::{
+    response_into_fake_stream_chunks, unwrap_json_tool_call,
+};
 
 use crate::wire::{
     build_request, inject_cache_breakpoints, response_into_chat_response, split_system,

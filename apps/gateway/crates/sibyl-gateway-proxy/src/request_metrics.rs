@@ -88,7 +88,10 @@ impl<'a> Caller<'a> {
     /// Recover an owned caller from the request's dispatch snapshot.
     /// Capture this before starting a stream so key deletion or reassignment
     /// cannot change the caller attributed to the completed request.
-    pub(crate) fn from_api_key_id(snap: &sibyl_gateway_core::GatewaySnapshot, api_key_id: &str) -> Owned {
+    pub(crate) fn from_api_key_id(
+        snap: &sibyl_gateway_core::GatewaySnapshot,
+        api_key_id: &str,
+    ) -> Owned {
         let entry = snap.apikeys.get_by_id(api_key_id);
         let key = entry.as_ref().map(|e| &e.value);
         Owned {

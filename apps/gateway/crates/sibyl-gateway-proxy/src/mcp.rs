@@ -17,13 +17,13 @@
 
 use std::time::{Duration, Instant};
 
-use sibyl_gateway_core::models::McpServerAllowlist;
-use sibyl_gateway_obs::{AccessLog, McpAccessLog, UsageEvent};
 use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use sibyl_gateway_core::models::McpServerAllowlist;
+use sibyl_gateway_obs::{AccessLog, McpAccessLog, UsageEvent};
 use tower::ServiceExt;
 
 use crate::auth::AuthenticatedKey;
@@ -519,15 +519,18 @@ async fn dispatch(
             .and_then(|p| p.arguments.as_ref())
             .map(|args| args.to_string())
             .unwrap_or_default();
-        let chat =
-            sibyl_gateway_hub::ChatFormat::new("", vec![sibyl_gateway_hub::ChatMessage::user(args_text)]);
+        let chat = sibyl_gateway_hub::ChatFormat::new(
+            "",
+            vec![sibyl_gateway_hub::ChatMessage::user(args_text)],
+        );
         // Segment-moderating members (custom scripts, Bedrock ANONYMIZE,
         // Presidio, Lakera, Aliyun AI) are consulted through the segment
         // pass below instead — the same check/moderate split every LLM
         // family uses, so a member is never consulted (or billed) twice
         // per hook.
         let (verdict, hits) =
-            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(chain, &chat).await;
+            sibyl_gateway_guardrails::Guardrail::check_input_non_segment_observed(chain, &chat)
+                .await;
         monitor_hits.extend(hits);
         if let sibyl_gateway_guardrails::GuardrailVerdict::Block {
             reason,
@@ -700,7 +703,8 @@ async fn dispatch(
     // from the key together with the environment/team MCP access policies —
     // so MCP tool access is governed by the same key object as LLM access.
     let acl = {
-        let resolved = sibyl_gateway_mcp::ToolAcl::resolve(&snapshot, &state.mcp_servers, auth.key());
+        let resolved =
+            sibyl_gateway_mcp::ToolAcl::resolve(&snapshot, &state.mcp_servers, auth.key());
         // The anonymous allowlist is a CEILING on the bound principal,
         // not just the entry gate. Applied here — one layer on the ACL
         // both endpoints share — it constrains `tools/list` and
@@ -740,7 +744,10 @@ async fn dispatch(
                     .into_response()
             }
         },
-        None => sibyl_gateway_mcp::McpGateway::from_snapshot_for_request(&snapshot, Some(&client_headers)),
+        None => sibyl_gateway_mcp::McpGateway::from_snapshot_for_request(
+            &snapshot,
+            Some(&client_headers),
+        ),
     }
     .with_tool_acl(acl);
     // Cloned out before the gateway is handed to the transport, which clones
@@ -750,7 +757,8 @@ async fn dispatch(
     // The deployment's body cap replaces rmcp's own 4 MiB default inside
     // the service; the proxy-level read above already enforced the same
     // limit, so the two layers can never disagree.
-    let service = sibyl_gateway_mcp::streamable_http_service(gateway, state.request_body_limit_bytes);
+    let service =
+        sibyl_gateway_mcp::streamable_http_service(gateway, state.request_body_limit_bytes);
     let request = Request::from_parts(parts, Body::from(bytes));
     // `StreamableHttpService` is a tower service that dispatches on method and
     // never fails (`Error = Infallible`); map its boxed body back to axum's.
@@ -1483,9 +1491,9 @@ fn jsonrpc_guardrail_block(
 mod tests {
     use super::*;
     use crate::build_router;
-    use sibyl_gateway_core::{GatewaySnapshot, ApiKey, ProxyConfig, ResourceEntry, SnapshotHandle};
     use axum::body::Body;
     use axum::http::{Request as HttpRequest, StatusCode};
+    use sibyl_gateway_core::{ApiKey, GatewaySnapshot, ProxyConfig, ResourceEntry, SnapshotHandle};
     use std::sync::Arc;
 
     fn cfg() -> ProxyConfig {
@@ -1625,7 +1633,9 @@ mod tests {
     /// A snapshot carrying one key per `(id, token, mcp_rate_limits)` triple.
     /// No key-level `rate_limit`, so any 429 can only come from the
     /// per-MCP-server layer.
-    fn snapshot_with_mcp_server_limits(keys: &[(&str, &str, serde_json::Value)]) -> GatewaySnapshot {
+    fn snapshot_with_mcp_server_limits(
+        keys: &[(&str, &str, serde_json::Value)],
+    ) -> GatewaySnapshot {
         let snapshot = GatewaySnapshot::new();
         for (id, token, limits) in keys {
             let apikey: ApiKey = serde_json::from_value(serde_json::json!({
@@ -1803,11 +1813,12 @@ mod tests {
             "mcp_access": { "allow": [] },
         }))
         .expect("valid apikey");
-        let policy: sibyl_gateway_core::models::McpPolicy = serde_json::from_value(serde_json::json!({
-            "scope": "env",
-            "allow": ["*"],
-        }))
-        .expect("valid policy");
+        let policy: sibyl_gateway_core::models::McpPolicy =
+            serde_json::from_value(serde_json::json!({
+                "scope": "env",
+                "allow": ["*"],
+            }))
+            .expect("valid policy");
         let snapshot = GatewaySnapshot::new();
         snapshot
             .apikeys
@@ -1869,12 +1880,13 @@ mod tests {
             "allowed_models": ["*"],
         }))
         .expect("valid apikey");
-        let policy: sibyl_gateway_core::models::McpPolicy = serde_json::from_value(serde_json::json!({
-            "scope": "env",
-            "allow": ["*"],
-            "deny": ["ghost__tool"],
-        }))
-        .expect("valid policy");
+        let policy: sibyl_gateway_core::models::McpPolicy =
+            serde_json::from_value(serde_json::json!({
+                "scope": "env",
+                "allow": ["*"],
+                "deny": ["ghost__tool"],
+            }))
+            .expect("valid policy");
         let snapshot = GatewaySnapshot::new();
         snapshot
             .apikeys

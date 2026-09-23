@@ -19,14 +19,14 @@
 //! Production wires this in `sibyl-gateway-server`'s bootstrap; tests that want
 //! deterministic behaviour continue to use [`crate::InMemoryStore`].
 
+use etcd_client::GetOptions;
+use serde::de::DeserializeOwned;
 use sibyl_gateway_core::resource::ResourceEntry;
 use sibyl_gateway_core::{
     A2aAgent, ApiKey, CachePolicy, Guardrail, McpServer, Model, ObservabilityExporter,
     PassthroughRoute, ProviderKey,
 };
 use sibyl_gateway_etcd::{kv_client, CallError, LazyEtcdClient};
-use etcd_client::GetOptions;
-use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -398,8 +398,14 @@ mod tests {
     #[test]
     fn key_for_matches_spec_layout() {
         let store = dummy_store();
-        assert_eq!(store.key_for("models", "abc-1"), "/sibyl-gateway/models/abc-1");
-        assert_eq!(store.key_for("api_keys", "xyz"), "/sibyl-gateway/api_keys/xyz");
+        assert_eq!(
+            store.key_for("models", "abc-1"),
+            "/sibyl-gateway/models/abc-1"
+        );
+        assert_eq!(
+            store.key_for("api_keys", "xyz"),
+            "/sibyl-gateway/api_keys/xyz"
+        );
     }
 
     #[test]
@@ -416,7 +422,9 @@ mod tests {
             Some("abc-1"),
         );
         // Wrong kind prefix → None.
-        assert!(store.id_from_key("/sibyl-gateway/api_keys/x", "models").is_none());
+        assert!(store
+            .id_from_key("/sibyl-gateway/api_keys/x", "models")
+            .is_none());
         // Outside the configured prefix → None.
         assert!(store.id_from_key("/other/models/x", "models").is_none());
     }

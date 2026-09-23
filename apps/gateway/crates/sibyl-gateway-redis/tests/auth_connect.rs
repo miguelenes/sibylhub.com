@@ -18,7 +18,9 @@
 //! the background re-attach is waiting on a network or on them.
 
 use sibyl_gateway_core::{RedisConnConfig, RedisMode};
-use sibyl_gateway_redis::{classify_connect_failure, connect_bounded, ConnectFailure, FailurePolicy};
+use sibyl_gateway_redis::{
+    classify_connect_failure, connect_bounded, ConnectFailure, FailurePolicy,
+};
 
 /// `redis://host:port`, with NO credential in it.
 fn plain_url() -> Option<String> {

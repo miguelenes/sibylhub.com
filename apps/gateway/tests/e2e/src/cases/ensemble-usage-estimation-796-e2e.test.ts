@@ -12,7 +12,7 @@ import {
 } from "../harness/index.js";
 import { lz4DecompressBlock, startMockSls, type MockSls } from "../harness/sls-mock.js";
 
-// E2E for api7/sibyl-gateway#796 (follow-up to AISIX-Cloud#1074): the non-streaming
+// E2E for api7/aisix#796 (follow-up to AISIX-Cloud#1074): the non-streaming
 // ensemble sub-call events (every panel member + the judge) must run through
 // the token-estimation fallback, and so must the panel members on the
 // streaming path (the judge there was already wired by #794). With a
@@ -64,7 +64,7 @@ const JUDGE_STREAM_NO_USAGE = [
   "[DONE]",
 ];
 
-describe("ensemble usage estimation e2e (api7/sibyl-gateway#796): every panel + judge sub-call is estimated and flagged when the backend omits usage", () => {
+describe("ensemble usage estimation e2e (api7/aisix#796): every panel + judge sub-call is estimated and flagged when the backend omits usage", () => {
   let app: SpawnedApp | undefined;
   let sls: MockSls | undefined;
   let memberAUp: OpenAiUpstream | undefined;

@@ -162,7 +162,6 @@ FROM debian:trixie-slim AS runtime
 # Ownership-verification label for the MCP Registry: when this image is
 # published as an MCP server entry, the registry requires this label to
 # match the server name in server.json.
-LABEL io.modelcontextprotocol.server.name="io.github.api7/sibyl-gateway"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tini \
@@ -196,7 +195,7 @@ RUN --mount=type=bind,from=builder,source=/usr/local/bin/sibyl-gateway,target=/m
     && apt-get purge -y --auto-remove libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
-# Bake the managed-mode bootstrap config so SibylHub Gateway gateways managed by
+# Bake the managed-mode bootstrap config so gateways managed by
 # AISIX Cloud can `docker run` without mounting a configuration file.
 # Environment variables provide the control-plane endpoints and gateway mTLS
 # certificate bundle.

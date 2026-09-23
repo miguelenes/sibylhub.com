@@ -191,7 +191,7 @@ jobs:
       # token that was already issued. Tests here also change that auth
       # store, which stales every token the cluster has handed out. The
       # container and this short-lifetime approach come from community PR
-      # api7/sibyl-gateway#763 (okaybase). `ETCD_AUTH_TTL_TEST_SECS` must match
+      # api7/aisix#763 (okaybase). `ETCD_AUTH_TTL_TEST_SECS` must match
       # the `ttl=` below — the tests sleep past it.
       ETCD_AUTH_TTL_TEST_URL: http://127.0.0.1:2579
       ETCD_AUTH_TTL_TEST_USER: root

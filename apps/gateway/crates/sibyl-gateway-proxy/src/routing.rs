@@ -34,15 +34,15 @@
 //! - **least_busy**: least-loaded target first, by in-flight requests
 //!   divided by target `weight` (the APISIX least_conn score).
 
+use axum::http::HeaderMap;
+use dashmap::DashMap;
+use rand::Rng;
 use sibyl_gateway_core::models::{LivePricingIndex, PricingIndex};
 use sibyl_gateway_core::{
     GatewaySnapshot, HashOnType, Model, Routing, RoutingStrategy, RoutingTarget,
     WhenAllUnavailablePolicy,
 };
 use sibyl_gateway_hub::BridgeError;
-use axum::http::HeaderMap;
-use dashmap::DashMap;
-use rand::Rng;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -1663,7 +1663,11 @@ mod tests {
                 "allowed_cidrs": cidrs,
             }))
             .unwrap();
-            table.insert(sibyl_gateway_core::ResourceEntry::new(format!("m-{i}"), model, 1));
+            table.insert(sibyl_gateway_core::ResourceEntry::new(
+                format!("m-{i}"),
+                model,
+                1,
+            ));
         }
         GatewaySnapshot {
             models: table,
@@ -2091,7 +2095,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_retry_loop_spends_no_attempt_on_a_capability_gap() {
         let state = crate::ProxyState::new(
-            sibyl_gateway_core::snapshot::SnapshotHandle::new(sibyl_gateway_core::GatewaySnapshot::new()),
+            sibyl_gateway_core::snapshot::SnapshotHandle::new(
+                sibyl_gateway_core::GatewaySnapshot::new(),
+            ),
             std::sync::Arc::new(sibyl_gateway_hub::Hub::new()),
             &sibyl_gateway_core::ProxyConfig {
                 addr: "127.0.0.1:0".into(),
@@ -2634,14 +2640,15 @@ mod tests {
     /// A snapshot whose shared catalog prices `key` at `input`/`output`.
     fn priced(key: &str, input: f64, output: f64) -> GatewaySnapshot {
         let snap = GatewaySnapshot::new();
-        snap.global_pricing.insert(sibyl_gateway_core::ResourceEntry::new(
-            "p-1",
-            serde_json::from_str(&format!(
-                r#"{{"key":"{key}","input_per_1k":{input},"output_per_1k":{output}}}"#
-            ))
-            .unwrap(),
-            1,
-        ));
+        snap.global_pricing
+            .insert(sibyl_gateway_core::ResourceEntry::new(
+                "p-1",
+                serde_json::from_str(&format!(
+                    r#"{{"key":"{key}","input_per_1k":{input},"output_per_1k":{output}}}"#
+                ))
+                .unwrap(),
+                1,
+            ));
         snap
     }
 
@@ -2755,7 +2762,8 @@ mod tests {
         // The census is worthless if it scans nothing; prove it reached
         // the crates it is meant to cover.
         assert!(
-            crates.join("sibyl-gateway-server/src").is_dir() && crates.join("sibyl-gateway-obs/src").is_dir(),
+            crates.join("sibyl-gateway-server/src").is_dir()
+                && crates.join("sibyl-gateway-obs/src").is_dir(),
             "the census did not reach the other crates: {}",
             crates.display(),
         );

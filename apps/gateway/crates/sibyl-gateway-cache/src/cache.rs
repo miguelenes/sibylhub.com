@@ -7,8 +7,8 @@
 //! Held behind `Arc<dyn Cache>` in `ProxyState`. Trait objects need
 //! `async_trait` until native async-fn-in-traits become dyn-compatible.
 
-use sibyl_gateway_hub::ChatResponse;
 use async_trait::async_trait;
+use sibyl_gateway_hub::ChatResponse;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]

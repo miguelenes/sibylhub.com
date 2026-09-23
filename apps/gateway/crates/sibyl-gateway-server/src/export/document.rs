@@ -27,10 +27,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sibyl_gateway_core::models::GuardrailScopeType;
-use sibyl_gateway_core::GatewaySnapshot;
 use serde::Serialize;
 use serde_json::Value;
+use sibyl_gateway_core::models::GuardrailScopeType;
+use sibyl_gateway_core::GatewaySnapshot;
 
 use super::secrets::{
     redact_by_key, redact_headers, redact_string_map, redact_top_level, RedactionCtx,

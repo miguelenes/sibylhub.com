@@ -22,7 +22,7 @@ import {
 //   6. 401 Anthropic envelope (/v1/messages)— separate rendering path
 
 // E2E: the data plane must identify itself via the `Server` response
-// header on every response, using the `SibylHub Gateway/<version>` product token.
+// header on every response, using the `SibylHub-Gateway/<version>` product token.
 // Pinned because the header is a customer-visible contract — clients
 // (and intermediaries) use `Server` to identify the gateway without
 // round-tripping a status endpoint, and the header must survive every
@@ -50,10 +50,10 @@ const VALID_KEY_HASH = createHash("sha256")
   .digest("hex");
 const UNKNOWN_PLAINTEXT = "sk-server-header-e2e-unregistered";
 
-// Semver-anchored: `SibylHub Gateway/` + `<major>.<minor>.<patch>` with optional
+// Semver-anchored: `SibylHub-Gateway/` + `<major>.<minor>.<patch>` with optional
 // pre-release / build metadata. The version segment comes from
 // `CARGO_PKG_VERSION`, which the workspace pins to semver — a regression
-// that swaps in e.g. `CARGO_PKG_NAME` (yielding `SibylHub Gateway/sibyl-gateway-proxy`)
+// that swaps in e.g. `CARGO_PKG_NAME` (yielding `SibylHub-Gateway/sibyl-gateway-proxy`)
 // would slip past a looser `.+` pattern. Tightening to semver locks the
 // documented contract.
 const SERVER_HEADER_PATTERN = /^SibylHub Gateway\/\d+\.\d+\.\d+([-+][\w.-]+)?$/;
@@ -110,7 +110,7 @@ describe("data plane identifies itself via Server header on every response", () 
     await upstream?.close();
   });
 
-  test("every response — success, 401, 404, livez — carries the same SibylHub Gateway/<version> token", async (ctx) => {
+  test("every response — success, 401, 404, livez — carries the same SibylHub-Gateway/<version> token", async (ctx) => {
     if (!etcdReachable || !app) {
       ctx.skip();
       return;

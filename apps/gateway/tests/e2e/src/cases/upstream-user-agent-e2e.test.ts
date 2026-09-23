@@ -124,7 +124,7 @@ describe.each([false, true])("upstream User-Agent (threadPerCore=%s)", (threadPe
       });
       await res.arrayBuffer();
       expect(res.status).toBe(200);
-      expect(res.headers.get("server")).toBe(`SibylHub Gateway/${version}`);
+      expect(res.headers.get("server")).toBe(`SibylHub-Gateway/${version}`);
       expect(upstream.receivedRequests).toHaveLength(before + 1);
       expect(upstream.receivedRequests[before].headers["user-agent"]).toBe(
         `sibyl-gateway/${version}`,

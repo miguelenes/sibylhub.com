@@ -10,9 +10,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use async_trait::async_trait;
 use sibyl_gateway_core::AppliedGuardrail;
 use sibyl_gateway_hub::{ChatFormat, ChatResponse};
-use async_trait::async_trait;
 
 use sibyl_gateway_core::models::{
     GuardrailEnforcedHit, GuardrailExecution, GuardrailInputMessages, GuardrailMetricsSink,

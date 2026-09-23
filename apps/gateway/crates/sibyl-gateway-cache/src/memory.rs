@@ -8,10 +8,10 @@
 //!   its own policy. moka's `Expiry` trait reads the per-entry TTL
 //!   we stash next to the response.
 
-use sibyl_gateway_hub::ChatResponse;
 use async_trait::async_trait;
 use moka::future::Cache as MokaCache;
 use moka::Expiry;
+use sibyl_gateway_hub::ChatResponse;
 use std::time::{Duration, Instant};
 
 use crate::cache::{Cache, CacheError};

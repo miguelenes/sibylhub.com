@@ -1,6 +1,6 @@
 use super::*;
-use sibyl_gateway_core::resource::ResourceEntry;
 use serde_json::json;
+use sibyl_gateway_core::resource::ResourceEntry;
 
 fn provider_key(display_name: &str, api_key: &str) -> sibyl_gateway_core::models::ProviderKey {
     serde_json::from_value(json!({"display_name": display_name, "api_key": api_key})).unwrap()
@@ -1251,7 +1251,9 @@ fn a_star_named_server_on_the_deny_side_blocks_the_export() {
 
 /// The anonymous ceiling with `server_ids` set: one anonymous block,
 /// registered servers as named.
-fn anonymous_settings(anonymous: Value) -> ResourceEntry<sibyl_gateway_core::models::McpAuthSettings> {
+fn anonymous_settings(
+    anonymous: Value,
+) -> ResourceEntry<sibyl_gateway_core::models::McpAuthSettings> {
     ResourceEntry::new(
         "env-uuid-1",
         serde_json::from_value(json!({ "anonymous": anonymous })).unwrap(),

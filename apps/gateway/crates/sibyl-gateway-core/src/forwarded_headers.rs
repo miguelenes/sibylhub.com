@@ -308,7 +308,7 @@ mod tests {
             assert!(forward_pattern_admits(&[name.to_string()], name), "{name}");
             // But a broad pattern is a statement about the operator's own
             // headers. On `/v1/*` the caller's `authorization` and
-            // `x-api-key` carry its SibylHub Gateway gateway key, and a deployment
+            // `x-api-key` carry its gateway API key, and a deployment
             // that wrote `["x-*"]` before this rule existed must not start
             // relaying it to a third party on upgrade.
             assert!(!forward_pattern_admits(&["*".into()], name), "{name}");

@@ -14,8 +14,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
-use sibyl_gateway_mcp::{streamable_http_service, McpGateway};
 use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -25,6 +23,8 @@ use rmcp::model::{CallToolRequestParams, CallToolResult};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 use serde_json::{json, Value};
+use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
+use sibyl_gateway_mcp::{streamable_http_service, McpGateway};
 
 /// The bearer token the gateway holds for the fake ERP API. The REST handlers
 /// 401 without it, proving the credential is injected gateway-side.

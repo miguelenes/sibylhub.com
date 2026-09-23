@@ -22,6 +22,15 @@
 //! `https://<region>-aiplatform.googleapis.com/v1/projects/<project>/
 //!  locations/<region>/publishers/google/models/<model>:generateContent`
 
+use async_trait::async_trait;
+use bytes::Bytes;
+use futures::StreamExt;
+use http::{
+    header::{HeaderName, HeaderValue},
+    HeaderMap,
+};
+use reqwest::{header, Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use sibyl_gateway_hub::{
     sse::{SseDecoder, SseEvent},
     structured_output::{
@@ -32,15 +41,6 @@ use sibyl_gateway_hub::{
     ChatMessage, ChatResponse, EmbeddingObject, EmbeddingRequest, EmbeddingResponse,
     EmbeddingUsage, EmbeddingVector, FinishReason, Role, UsageStats,
 };
-use async_trait::async_trait;
-use bytes::Bytes;
-use futures::StreamExt;
-use http::{
-    header::{HeaderName, HeaderValue},
-    HeaderMap,
-};
-use reqwest::{header, Client, StatusCode};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -574,7 +574,8 @@ async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> BridgeEr
     let retry_after = sibyl_gateway_hub::parse_retry_after(resp.headers());
     let is_json = sibyl_gateway_hub::response_is_json(&resp);
     let body =
-        sibyl_gateway_hub::read_body_capped(resp, sibyl_gateway_hub::MAX_UPSTREAM_ERROR_BODY_BYTES).await;
+        sibyl_gateway_hub::read_body_capped(resp, sibyl_gateway_hub::MAX_UPSTREAM_ERROR_BODY_BYTES)
+            .await;
     // Skip the serde parse on non-JSON bodies (HTML / text error pages
     // from a fronting WAF or load balancer). Same guard as
     // `capture_upstream_error_http`.

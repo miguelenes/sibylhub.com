@@ -643,8 +643,8 @@ fn format_type(props: &Value, indent: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sibyl_gateway_hub::chat::{ChatFormat, ChatMessage, Role};
     use serde_json::json;
+    use sibyl_gateway_hub::chat::{ChatFormat, ChatMessage, Role};
 
     fn chat_est(model: &str, req: ChatFormat) -> Estimator {
         Estimator::new(model, PromptInput::Chat(Box::new(req)))

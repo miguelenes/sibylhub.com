@@ -19,12 +19,12 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use sibyl_gateway_core::snapshot::SnapshotHandle;
-use sibyl_gateway_core::{GatewaySnapshot, RoutingStrategy};
-use sibyl_gateway_obs::{DeploymentLabels, DeploymentState, Metrics, RequestOutcome};
 use axum::http::header::{HeaderName, HeaderValue, CONTENT_TYPE};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use sibyl_gateway_core::snapshot::SnapshotHandle;
+use sibyl_gateway_core::{GatewaySnapshot, RoutingStrategy};
+use sibyl_gateway_obs::{DeploymentLabels, DeploymentState, Metrics, RequestOutcome};
 
 static X_CONTENT_TYPE_OPTIONS: HeaderName = HeaderName::from_static("x-content-type-options");
 static NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");

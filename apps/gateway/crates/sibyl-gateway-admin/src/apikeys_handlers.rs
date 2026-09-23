@@ -6,11 +6,11 @@
 //! an explicit read-safe allowlist of fields, manually mapped, so a
 //! field newly added to `ApiKey` never leaks here by default.
 
-use sibyl_gateway_core::resource::ResourceEntry;
-use sibyl_gateway_core::ApiKey;
 use axum::extract::{Path, State};
 use axum::Json;
 use serde::Serialize;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::ApiKey;
 
 use crate::auth::AdminAuth;
 use crate::error::AdminError;

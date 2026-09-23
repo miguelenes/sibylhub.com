@@ -12,7 +12,10 @@ fn env_of(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         .collect()
 }
 
-fn load(contents: &str, env: &HashMap<String, String>) -> Result<GatewaySnapshot, FileSourceErrors> {
+fn load(
+    contents: &str,
+    env: &HashMap<String, String>,
+) -> Result<GatewaySnapshot, FileSourceErrors> {
     load_from_str(contents, "resources.yaml", 1, &|name| {
         env.get(name).cloned()
     })
@@ -1652,7 +1655,10 @@ fn the_file_source_rejects_every_semantically_invalid_provider_shape() {
             format!("hmac_secret: {secret}\n    jwks_uri: https://x/jwks"),
             "`jwks_uri` must be absent",
         ),
-        ("audiences: [\"sibyl-gateway\"]".to_string(), "`issuer` is required"),
+        (
+            "audiences: [\"sibyl-gateway\"]".to_string(),
+            "`issuer` is required",
+        ),
         (
             "issuer: https://idp.test".to_string(),
             "`audiences` is required",

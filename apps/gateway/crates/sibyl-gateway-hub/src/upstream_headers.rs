@@ -42,11 +42,11 @@
 
 use std::collections::HashSet;
 
-use sibyl_gateway_core::{HeaderVars, RequestOverrides};
 use http::{
     header::{HeaderName, HeaderValue},
     HeaderMap,
 };
+use sibyl_gateway_core::{HeaderVars, RequestOverrides};
 
 /// Whether a client's copy of a header may be forwarded by this pipeline.
 ///
@@ -80,7 +80,9 @@ pub struct CallerIdentity {
 
 impl CallerIdentity {
     /// Read the identity off the authenticated key's snapshot entry.
-    pub fn from_entry(entry: &sibyl_gateway_core::ResourceEntry<sibyl_gateway_core::ApiKey>) -> Self {
+    pub fn from_entry(
+        entry: &sibyl_gateway_core::ResourceEntry<sibyl_gateway_core::ApiKey>,
+    ) -> Self {
         Self {
             api_key_id: entry.id.clone(),
             api_key_name: entry.value.display_name.clone(),
@@ -168,7 +170,8 @@ pub fn resolve_extra_headers(ctx: &UpstreamHeaderContext<'_>) -> Vec<(HeaderName
     // answer the credential-slot question differently as the slot list
     // grows.
     out.retain(|(name, _)| {
-        !(sibyl_gateway_core::displaces_a_gateway_header(name.as_str()) && forwarded.claims(name.as_str()))
+        !(sibyl_gateway_core::displaces_a_gateway_header(name.as_str())
+            && forwarded.claims(name.as_str()))
     });
     let taken: HashSet<HeaderName> = out.iter().map(|(name, _)| name.clone()).collect();
     out.extend(
@@ -299,7 +302,8 @@ impl ForwardedClientHeaders {
     /// the precedence is a property of this type, not of each call site.
     pub fn apply(&self, headers: &mut HeaderMap) {
         for (name, value) in &self.entries {
-            if headers.contains_key(name) && !sibyl_gateway_core::displaces_a_gateway_header(name.as_str())
+            if headers.contains_key(name)
+                && !sibyl_gateway_core::displaces_a_gateway_header(name.as_str())
             {
                 continue;
             }

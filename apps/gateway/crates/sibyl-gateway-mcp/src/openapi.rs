@@ -23,11 +23,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use sibyl_gateway_core::snapshot::ResourceTable;
-use sibyl_gateway_core::{McpAuthType, McpServer, ResourceEntry};
 use async_trait::async_trait;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde_json::{json, Map, Value};
+use sibyl_gateway_core::snapshot::ResourceTable;
+use sibyl_gateway_core::{McpAuthType, McpServer, ResourceEntry};
 
 use crate::bridge::{McpBridge, McpTool, McpToolResult, OAuthClientConfig};
 use crate::error::McpError;

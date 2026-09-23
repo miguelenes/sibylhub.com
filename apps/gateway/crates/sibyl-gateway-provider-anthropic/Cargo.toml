@@ -10,7 +10,7 @@ description = "sibyl-gateway: Anthropic Messages provider with full bidirectiona
 
 [dependencies]
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

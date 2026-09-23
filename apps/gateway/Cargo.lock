@@ -32,11 +32,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-a2a"
+name = "sibyl-gateway-a2a"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
  "async-stream",
  "async-trait",
  "axum 0.7.9",
@@ -51,15 +51,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-admin"
+name = "sibyl-gateway-admin"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-etcd",
- "aisix-gateway",
- "aisix-obs",
- "aisix-provider-openai",
- "aisix-proxy",
+ "sibyl-gateway-core",
+ "sibyl-gateway-etcd",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-obs",
+ "sibyl-gateway-provider-openai",
+ "sibyl-gateway-proxy",
  "async-trait",
  "axum 0.7.9",
  "bytes",
@@ -79,13 +79,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-cache"
+name = "sibyl-gateway-cache"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
- "aisix-obs",
- "aisix-redis",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-obs",
+ "sibyl-gateway-redis",
  "async-trait",
  "dashmap",
  "moka",
@@ -96,7 +96,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-core"
+name = "sibyl-gateway-core"
 version = "0.3.0"
 dependencies = [
  "anyhow",
@@ -126,10 +126,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-etcd"
+name = "sibyl-gateway-etcd"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
+ "sibyl-gateway-core",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -150,10 +150,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-gateway"
+name = "sibyl-gateway-hub"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
+ "sibyl-gateway-core",
  "async-trait",
  "aws-smithy-http-client",
  "aws-smithy-runtime-api",
@@ -177,11 +177,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-guardrails"
+name = "sibyl-gateway-guardrails"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -208,11 +208,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-mcp"
+name = "sibyl-gateway-mcp"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
  "async-trait",
  "axum 0.7.9",
  "futures",
@@ -231,11 +231,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-obs"
+name = "sibyl-gateway-obs"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
  "aliyun-log-sdk-protobuf",
  "aliyun-log-sdk-sign",
  "async-trait",
@@ -267,11 +267,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-provider-anthropic"
+name = "sibyl-gateway-provider-anthropic"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
  "async-stream",
  "async-trait",
  "bytes",
@@ -286,13 +286,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-provider-azure-openai"
+name = "sibyl-gateway-provider-azure-openai"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
- "aisix-provider-anthropic",
- "aisix-provider-openai",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-provider-anthropic",
+ "sibyl-gateway-provider-openai",
  "async-stream",
  "async-trait",
  "bytes",
@@ -307,13 +307,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-provider-bedrock"
+name = "sibyl-gateway-provider-bedrock"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
- "aisix-provider-anthropic",
- "aisix-provider-openai",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-provider-anthropic",
+ "sibyl-gateway-provider-openai",
  "async-stream",
  "async-trait",
  "aws-config",
@@ -332,12 +332,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-provider-openai"
+name = "sibyl-gateway-provider-openai"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
- "aisix-provider-anthropic",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-provider-anthropic",
  "async-stream",
  "async-trait",
  "bytes",
@@ -352,13 +352,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-provider-vertex"
+name = "sibyl-gateway-provider-vertex"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-gateway",
- "aisix-provider-anthropic",
- "aisix-provider-openai",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-provider-anthropic",
+ "sibyl-gateway-provider-openai",
  "async-stream",
  "async-trait",
  "bytes",
@@ -373,19 +373,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-proxy"
+name = "sibyl-gateway-proxy"
 version = "0.3.0"
 dependencies = [
- "aisix-a2a",
- "aisix-cache",
- "aisix-core",
- "aisix-gateway",
- "aisix-guardrails",
- "aisix-mcp",
- "aisix-obs",
- "aisix-provider-anthropic",
- "aisix-provider-openai",
- "aisix-ratelimit",
+ "sibyl-gateway-a2a",
+ "sibyl-gateway-cache",
+ "sibyl-gateway-core",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-guardrails",
+ "sibyl-gateway-mcp",
+ "sibyl-gateway-obs",
+ "sibyl-gateway-provider-anthropic",
+ "sibyl-gateway-provider-openai",
+ "sibyl-gateway-ratelimit",
  "arc-swap",
  "async-stream",
  "async-trait",
@@ -421,12 +421,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-ratelimit"
+name = "sibyl-gateway-ratelimit"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
- "aisix-obs",
- "aisix-redis",
+ "sibyl-gateway-core",
+ "sibyl-gateway-obs",
+ "sibyl-gateway-redis",
  "async-trait",
  "dashmap",
  "parking_lot",
@@ -438,10 +438,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-redis"
+name = "sibyl-gateway-redis"
 version = "0.3.0"
 dependencies = [
- "aisix-core",
+ "sibyl-gateway-core",
  "arc-swap",
  "redis",
  "tokio",
@@ -449,24 +449,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "aisix-server"
+name = "sibyl-gateway-server"
 version = "0.3.0"
 dependencies = [
- "aisix-admin",
- "aisix-cache",
- "aisix-core",
- "aisix-etcd",
- "aisix-gateway",
- "aisix-guardrails",
- "aisix-obs",
- "aisix-provider-anthropic",
- "aisix-provider-azure-openai",
- "aisix-provider-bedrock",
- "aisix-provider-openai",
- "aisix-provider-vertex",
- "aisix-proxy",
- "aisix-ratelimit",
- "aisix-redis",
+ "sibyl-gateway-admin",
+ "sibyl-gateway-cache",
+ "sibyl-gateway-core",
+ "sibyl-gateway-etcd",
+ "sibyl-gateway-hub",
+ "sibyl-gateway-guardrails",
+ "sibyl-gateway-obs",
+ "sibyl-gateway-provider-anthropic",
+ "sibyl-gateway-provider-azure-openai",
+ "sibyl-gateway-provider-bedrock",
+ "sibyl-gateway-provider-openai",
+ "sibyl-gateway-provider-vertex",
+ "sibyl-gateway-proxy",
+ "sibyl-gateway-ratelimit",
+ "sibyl-gateway-redis",
  "anyhow",
  "axum 0.7.9",
  "chrono",

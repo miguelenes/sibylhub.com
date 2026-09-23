@@ -10,7 +10,7 @@ description = "sibyl-gateway: pluggable guardrails (pre_call / during_call / pos
 
 [dependencies]
 sibyl-gateway-core = { path = "../sibyl-gateway-core" }
-sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true

@@ -16,8 +16,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
-use sibyl_gateway_mcp::{streamable_http_service, McpGateway, ToolAcl};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -27,6 +25,8 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleServer, ServerHandler, ServiceExt};
+use sibyl_gateway_core::{GatewaySnapshot, McpServer, ResourceEntry};
+use sibyl_gateway_mcp::{streamable_http_service, McpGateway, ToolAcl};
 
 /// A real upstream MCP server exposing one echo tool under `tool_name`,
 /// prefixing its reply with `label` so routing is observable.

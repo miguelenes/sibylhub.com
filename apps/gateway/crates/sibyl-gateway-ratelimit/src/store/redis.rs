@@ -39,11 +39,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use redis::Script;
 use sibyl_gateway_core::{RateLimit, RedisConnConfig};
 use sibyl_gateway_obs::metrics::Metrics;
 use sibyl_gateway_redis::{ConnSlot, FailurePolicy};
-use async_trait::async_trait;
-use redis::Script;
 
 use super::{local::LocalStore, token_dims, Dim, RateStore};
 use crate::error::{LimitDetail, RateLimitError};

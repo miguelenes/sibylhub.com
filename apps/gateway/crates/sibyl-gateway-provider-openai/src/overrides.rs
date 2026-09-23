@@ -33,8 +33,8 @@
 
 use std::collections::HashMap;
 
-use sibyl_gateway_core::{ParamConstraints, StreamDoneMarker};
 use serde_json::{Map, Value};
+use sibyl_gateway_core::{ParamConstraints, StreamDoneMarker};
 
 /// Outcome of evaluating an SSE stream against a
 /// [`StreamDoneMarker`] policy. Runtime-only — never serialized to

@@ -66,13 +66,15 @@ mod heartbeat;
 mod managed_bundle;
 mod telemetry;
 
+use clap::Parser;
+use etcd_client::{Certificate, ConnectOptions, Identity, TlsOptions};
 use sibyl_gateway_admin::{AdminState, ConfigStore, EtcdConfigStore, FileManagedStore};
 use sibyl_gateway_cache::{Cache, MemoryCache};
 use sibyl_gateway_core::models::Adapter;
 use sibyl_gateway_core::snapshot::SnapshotHandle;
 use sibyl_gateway_core::{
-    GatewaySnapshot, CacheBackend, Config, ConfigStatus, EtcdConfig, EtcdTlsConfig, RateLimitBackend,
-    SourceKind,
+    CacheBackend, Config, ConfigStatus, EtcdConfig, EtcdTlsConfig, GatewaySnapshot,
+    RateLimitBackend, SourceKind,
 };
 use sibyl_gateway_etcd::{EtcdConfigProvider, SnapshotCache, Supervisor, WatchedPrefix};
 use sibyl_gateway_hub::{Hub, UpstreamHttpConfig};
@@ -86,8 +88,6 @@ use sibyl_gateway_proxy::background::run_background_model_check_once;
 use sibyl_gateway_proxy::budget::BudgetClient;
 use sibyl_gateway_proxy::{CacheBackends, ProxyState};
 use sibyl_gateway_ratelimit::{Limiter, RedisStore};
-use clap::Parser;
-use etcd_client::{Certificate, ConnectOptions, Identity, TlsOptions};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -95,7 +95,7 @@ use tokio::sync::watch;
 #[command(
     name = "sibyl-gateway",
     version = sibyl_gateway_core::BUILD_VERSION,
-    about = "sibyl-gateway AI Gateway",
+    about = "SibylHub Gateway",
     subcommand_negates_reqs = true
 )]
 struct Cli {
@@ -155,6 +155,27 @@ enum CliCommand {
 /// taking a core back from the workers.
 const CONTROL_RUNTIME_THREADS: usize = 2;
 
+/// Legacy `AISIX_*` spellings of the two config-path variables this
+/// binary reads by name OUTSIDE the configuration loader: clap's
+/// `--config` env fallback and the entrypoint's config selection. Applied
+/// before argument parsing so a pre-rebrand deployment keeps booting; the
+/// new prefix always wins and a legacy variable applied here is announced
+/// on stderr, because tracing is not installed yet this early in the boot.
+fn apply_legacy_config_path_env() {
+    const PAIRS: [(&str, &str); 2] = [
+        ("AISIX_CONFIG", "SIBYL_GATEWAY_CONFIG"),
+        ("AISIX_CONFIG_PATH", "SIBYL_GATEWAY_CONFIG_PATH"),
+    ];
+    for (legacy, new) in PAIRS {
+        if std::env::var_os(new).is_none() {
+            if let Some(value) = std::env::var_os(legacy) {
+                eprintln!("note: {legacy} set; applying it as {new} (legacy environment prefix)");
+                std::env::set_var(new, value);
+            }
+        }
+    }
+}
+
 /// How long the exit waits for the log queue to reach its sink.
 ///
 /// Its own constant rather than `shutdown.min_drain_secs`: that knob
@@ -177,6 +198,7 @@ fn main() -> anyhow::Result<()> {
     // the process somehow has a provider installed already (idempotent).
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
+    apply_legacy_config_path_env();
     let cli = Cli::parse();
 
     // Subcommands run without loading the bootstrap config or booting
@@ -241,6 +263,13 @@ async fn async_main(cfg: Config) -> anyhow::Result<()> {
         tracing::warn!("{ignored}");
     }
 
+    // Legacy `AISIX_*` variables the loader applied under their new
+    // `SIBYL_GATEWAY_*` names. Same placement rationale: the load that
+    // produced these ran before the subscriber existed.
+    for legacy in Config::legacy_env_overrides() {
+        tracing::warn!("{legacy}");
+    }
+
     // After tracing so the enable outcome is observable in the logs; the
     // returned outcome is already logged inside.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -286,7 +315,8 @@ fn run_validate(resources: &Path) -> anyhow::Result<()> {
     // chain while the gateway keeps serving. Runtime status reports that
     // rejection, but this command still needs to fail synchronously rather
     // than validate a file whose screening rule cannot run.
-    let unbuildable = sibyl_gateway_guardrails::unbuildable_guardrail_rows(&snapshot.guardrails, None);
+    let unbuildable =
+        sibyl_gateway_guardrails::unbuildable_guardrail_rows(&snapshot.guardrails, None);
     if !unbuildable.is_empty() {
         eprintln!(
             "resources file {}: {} guardrail(s) load but cannot run:",
@@ -356,7 +386,10 @@ fn run_validate(resources: &Path) -> anyhow::Result<()> {
 ///   raw caller string still reaching the label, this check would retire
 ///   live series every sweep, because a wildcard alias serves concrete
 ///   names that are in no `models` row.
-fn gauge_series_is_live(snap: &GatewaySnapshot, series: sibyl_gateway_obs::LiveGaugeSeries<'_>) -> bool {
+fn gauge_series_is_live(
+    snap: &GatewaySnapshot,
+    series: sibyl_gateway_obs::LiveGaugeSeries<'_>,
+) -> bool {
     const UNKNOWN: &str = "unknown";
     // What `metric_model_label` emits when nothing resolved. It names no
     // row, so it is a placeholder like `unknown` and must never be retired.
@@ -733,9 +766,13 @@ async fn run(mut cfg: Config) -> anyhow::Result<()> {
             // error report on any problem. SIGHUP re-runs the identical
             // pipeline; a failed reload keeps the last-good snapshot.
             let config_status = ConfigStatus::new(SourceKind::File);
-            let snapshot =
-                sibyl_gateway_core::filesource::load_resources_file_tracked(path, 1, true, &config_status)
-                    .map_err(|report| anyhow::anyhow!("{report}"))?;
+            let snapshot = sibyl_gateway_core::filesource::load_resources_file_tracked(
+                path,
+                1,
+                true,
+                &config_status,
+            )
+            .map_err(|report| anyhow::anyhow!("{report}"))?;
             tracing::info!(
                 file = %path.display(),
                 resources = snapshot.total_entries(),
@@ -1185,9 +1222,10 @@ async fn run(mut cfg: Config) -> anyhow::Result<()> {
     proxy_state = proxy_state.with_usage_sink(usage_sink.with_metrics((*metrics).clone()));
     // AISIX-Cloud#1045: operator UA→client_type rules. Compile errors are
     // boot-fatal — a dropped rule would silently misattribute traffic.
-    let client_classifier =
-        sibyl_gateway_obs::ClientTypeClassifier::compile(&cfg.observability.metrics.client_type_rules)
-            .map_err(|e| anyhow::anyhow!(e))?;
+    let client_classifier = sibyl_gateway_obs::ClientTypeClassifier::compile(
+        &cfg.observability.metrics.client_type_rules,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
     proxy_state = proxy_state.with_client_classifier(Arc::new(client_classifier));
     proxy_state = proxy_state.with_default_retries(cfg.upstream.retries);
     proxy_state =
@@ -2168,7 +2206,9 @@ fn build_hub() -> Hub {
     hub
 }
 
-fn background_check_interval(snapshot: &sibyl_gateway_core::GatewaySnapshot) -> std::time::Duration {
+fn background_check_interval(
+    snapshot: &sibyl_gateway_core::GatewaySnapshot,
+) -> std::time::Duration {
     let min_interval = snapshot
         .models
         .entries()
@@ -3382,7 +3422,9 @@ mod tests {
         }))
         .unwrap();
         snap.models
-            .insert(sibyl_gateway_core::resource::ResourceEntry::new("m-1", model, 1));
+            .insert(sibyl_gateway_core::resource::ResourceEntry::new(
+                "m-1", model, 1,
+            ));
         let at = |key, model| sibyl_gateway_obs::LiveGaugeSeries::RatelimitRemaining {
             api_key_id: key,
             model,
@@ -3467,7 +3509,8 @@ mod tests {
     #[test]
     fn cli_validate_subcommand_does_not_require_config() {
         // `sibyl-gateway validate --resources f` runs without --config …
-        let cli = Cli::try_parse_from(["sibyl-gateway", "validate", "--resources", "/tmp/r.yaml"]).unwrap();
+        let cli = Cli::try_parse_from(["sibyl-gateway", "validate", "--resources", "/tmp/r.yaml"])
+            .unwrap();
         assert!(cli.config.is_none());
         match cli.command {
             Some(CliCommand::Validate { resources }) => {

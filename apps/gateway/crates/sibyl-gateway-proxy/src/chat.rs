@@ -16,22 +16,22 @@
 //!    line. Errors surface via [`ProxyError`] which carries the right
 //!    status, error type, and (for rate-limits) Retry-After.
 
-use sibyl_gateway_cache::{semantic_prompt_text, Cache, CacheKey, SemanticCacheStore};
-use sibyl_gateway_core::models::CacheBackend;
-use sibyl_gateway_core::models::{CacheScope, SemanticCacheConfig};
-use sibyl_gateway_core::{GatewaySnapshot, AppliedGuardrail};
-use sibyl_gateway_hub::{BridgeError, ChatFormat, ChatResponse};
-use sibyl_gateway_guardrails::GuardrailVerdict;
-use sibyl_gateway_obs::{
-    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, Metrics, UsageEvent,
-    UsageLabels,
-};
 use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::{Stream, StreamExt};
+use sibyl_gateway_cache::{semantic_prompt_text, Cache, CacheKey, SemanticCacheStore};
+use sibyl_gateway_core::models::CacheBackend;
+use sibyl_gateway_core::models::{CacheScope, SemanticCacheConfig};
+use sibyl_gateway_core::{AppliedGuardrail, GatewaySnapshot};
+use sibyl_gateway_guardrails::GuardrailVerdict;
+use sibyl_gateway_hub::{BridgeError, ChatFormat, ChatResponse};
+use sibyl_gateway_obs::{
+    content_capture_cap, AccessLog, CapturedContent, LatencyLabels, Metrics, UsageEvent,
+    UsageLabels,
+};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -349,7 +349,10 @@ pub async fn chat_completions(
             }
             // Correlation / routing headers.
             if let Ok(v) = axum::http::HeaderValue::try_from(request_id.as_str()) {
-                success.response.headers_mut().insert("x-sibylhub-call-id", v);
+                success
+                    .response
+                    .headers_mut()
+                    .insert("x-sibylhub-call-id", v);
             }
             // `x-sibylhub-served-by` exposes which routing target served
             // the request — see AISIX-Cloud#410. Only emitted when a

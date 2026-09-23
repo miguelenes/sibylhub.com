@@ -22,10 +22,10 @@
 //! Like the exact memory backend, it is per-instance — replicas do not
 //! share entries.
 
-use sibyl_gateway_core::best_similarity_by;
-use sibyl_gateway_hub::ChatResponse;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use sibyl_gateway_core::best_similarity_by;
+use sibyl_gateway_hub::ChatResponse;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 

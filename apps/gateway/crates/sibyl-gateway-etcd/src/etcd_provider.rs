@@ -578,9 +578,10 @@ mod tests {
         )
         .await;
         let started = std::time::Instant::now();
-        let err = EtcdConfigProvider::connect(&[endpoint], "/sibyl-gateway", credentials(), None, None)
-            .await
-            .expect_err("refused credentials cannot produce a usable provider");
+        let err =
+            EtcdConfigProvider::connect(&[endpoint], "/sibyl-gateway", credentials(), None, None)
+                .await
+                .expect_err("refused credentials cannot produce a usable provider");
         let ProviderError::Rejected(msg) = err else {
             panic!("a refusal must be its own class, got {err:?}");
         };
@@ -788,10 +789,15 @@ mod tests {
         // throttling. All of them heal without anyone editing a config.
         for code in [1u16, 2, 4, 8, 10, 13, 14] {
             let endpoint = spawn_grpc_status_server(code, "no answer").await;
-            let provider =
-                EtcdConfigProvider::connect(&[endpoint], "/sibyl-gateway", credentials(), None, None)
-                    .await
-                    .unwrap_or_else(|e| panic!("code {code} must be waited out, got {e:?}"));
+            let provider = EtcdConfigProvider::connect(
+                &[endpoint],
+                "/sibyl-gateway",
+                credentials(),
+                None,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("code {code} must be waited out, got {e:?}"));
             assert!(matches!(
                 provider.load_all().await,
                 Err(ProviderError::Connect(_))
@@ -807,10 +813,15 @@ mod tests {
         // left to re-authenticate.
         {
             let endpoint = spawn_grpc_status_server(16, "etcdserver: invalid auth token").await;
-            let provider =
-                EtcdConfigProvider::connect(&[endpoint], "/sibyl-gateway", credentials(), None, None)
-                    .await
-                    .expect("an invalid token must be waited out, not fatal");
+            let provider = EtcdConfigProvider::connect(
+                &[endpoint],
+                "/sibyl-gateway",
+                credentials(),
+                None,
+                None,
+            )
+            .await
+            .expect("an invalid token must be waited out, not fatal");
             assert!(matches!(
                 provider.load_all().await,
                 Err(ProviderError::Connect(_))
@@ -826,9 +837,15 @@ mod tests {
                 "etcdserver: authentication failed, invalid user ID or password",
             )
             .await;
-            let err = EtcdConfigProvider::connect(&[endpoint], "/sibyl-gateway", credentials(), None, None)
-                .await
-                .expect_err("a refusal must end the boot");
+            let err = EtcdConfigProvider::connect(
+                &[endpoint],
+                "/sibyl-gateway",
+                credentials(),
+                None,
+                None,
+            )
+            .await
+            .expect_err("a refusal must end the boot");
             assert!(
                 matches!(err, ProviderError::Rejected(_)),
                 "code {code} must be fatal, got {err:?}",

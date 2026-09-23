@@ -6,6 +6,7 @@ const sidebars: SidebarsConfig = {
     "workspace",
     "schemas",
     "governance",
+    "gateway",
     "runtime-boundaries",
   ],
 };
