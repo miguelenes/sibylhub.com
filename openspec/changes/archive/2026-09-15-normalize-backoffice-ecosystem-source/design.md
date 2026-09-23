@@ -38,22 +38,22 @@ This avoids a dual-write design in which JSON payloads and normalized rows could
 
 The migration creates the requested 14 tables in dependency order. The table-level contract is:
 
-| Table | Required domain data and relationship policy |
-| --- | --- |
-| `programming_languages` | `name`, globally unique `slug`, JSON `extensions`, nullable `default_package_manager_id`; the default-manager foreign key is added after package managers exist. |
-| `runtimes` | `programming_language_id`, `name`, globally unique `slug`, backed `engine_type` value, nullable `version_manager`. Language ownership cascades. |
-| `package_registries` | Registry identity and URLs, backed `purl_type`, and namespace-support flag. It has no required parent. |
-| `package_managers` | Required language, nullable registry, identity, binary/manifest/lockfile values, install/add commands, and workspace-related configuration. Language ownership cascades; registry deletion nulls the optional reference. |
-| `lockfile_specifications` | Required package manager, filename, backed format and version-standard values, and frozen-install flag. Manager ownership cascades. |
-| `workspace_configurations` | Required package manager, manifest, backed format, glob key, and isolated-install flag. Manager ownership cascades. |
-| `package_categories` | Name, globally unique slug, and nullable description. Deletion is restricted while a required package or invariant reference remains. |
-| `packages` | Required manager and category, name, manager-scoped slug, package/homepage/repository URLs, license, opinionated flag, and nullable Markdown rationale. Manager ownership cascades; category deletion is restricted. |
-| `package_runtime_compatibility` | Required package and runtime, compatibility flag, and nullable notes. Both parent deletions cascade. |
-| `stack_invariants` | Required category, approved package, banned package, severity, reason; nullable target runtime, framework package, replacement example, and migration URL. Package deletion is restricted while referenced. |
-| `builders` | Name, globally unique slug, JSON configuration filenames, and run command. Builder deletion is restricted while a published language relationship requires it. |
-| `builder_language` | Plain many-to-many pivot between builders and programming languages. Both parent deletions cascade. |
-| `documentations` | Polymorphic documentable type/ID, source and optional R2 keys, content hash, token count, and scrape timestamp. The polymorphic target has an indexed pair but no database foreign key. |
-| `documentation_chunks` | Required documentation parent, chunk ordering/offset metadata, token count, and summary. Documentation deletion cascades. |
+| Table                           | Required domain data and relationship policy                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `programming_languages`         | `name`, globally unique `slug`, JSON `extensions`, nullable `default_package_manager_id`; the default-manager foreign key is added after package managers exist.                                                         |
+| `runtimes`                      | `programming_language_id`, `name`, globally unique `slug`, backed `engine_type` value, nullable `version_manager`. Language ownership cascades.                                                                          |
+| `package_registries`            | Registry identity and URLs, backed `purl_type`, and namespace-support flag. It has no required parent.                                                                                                                   |
+| `package_managers`              | Required language, nullable registry, identity, binary/manifest/lockfile values, install/add commands, and workspace-related configuration. Language ownership cascades; registry deletion nulls the optional reference. |
+| `lockfile_specifications`       | Required package manager, filename, backed format and version-standard values, and frozen-install flag. Manager ownership cascades.                                                                                      |
+| `workspace_configurations`      | Required package manager, manifest, backed format, glob key, and isolated-install flag. Manager ownership cascades.                                                                                                      |
+| `package_categories`            | Name, globally unique slug, and nullable description. Deletion is restricted while a required package or invariant reference remains.                                                                                    |
+| `packages`                      | Required manager and category, name, manager-scoped slug, package/homepage/repository URLs, license, opinionated flag, and nullable Markdown rationale. Manager ownership cascades; category deletion is restricted.     |
+| `package_runtime_compatibility` | Required package and runtime, compatibility flag, and nullable notes. Both parent deletions cascade.                                                                                                                     |
+| `stack_invariants`              | Required category, approved package, banned package, severity, reason; nullable target runtime, framework package, replacement example, and migration URL. Package deletion is restricted while referenced.              |
+| `builders`                      | Name, globally unique slug, JSON configuration filenames, and run command. Builder deletion is restricted while a published language relationship requires it.                                                           |
+| `builder_language`              | Plain many-to-many pivot between builders and programming languages. Both parent deletions cascade.                                                                                                                      |
+| `documentations`                | Polymorphic documentable type/ID, source and optional R2 keys, content hash, token count, and scrape timestamp. The polymorphic target has an indexed pair but no database foreign key.                                  |
+| `documentation_chunks`          | Required documentation parent, chunk ordering/offset metadata, token count, and summary. Documentation deletion cascades.                                                                                                |
 
 The migration uses explicit indexes for all foreign keys and lookup fields. Language, runtime, category, and builder slugs are globally unique. Package slugs are unique by `(package_manager_id, slug)` so different package ecosystems may use the same slug. Required relationship deletion is restricted where deleting the parent would invalidate a source record; owned children and relationship rows cascade; optional references null on deletion.
 
@@ -91,10 +91,19 @@ The master index has this semantic shape:
   "schemaVersion": "2.0",
   "revisionId": "sha256:<lowercase-hex>",
   "languages": [
-    {"id": "javascript", "slug": "javascript", "name": "JavaScript", "path": "languages/javascript.json"}
+    {
+      "id": "javascript",
+      "slug": "javascript",
+      "name": "JavaScript",
+      "path": "languages/javascript.json"
+    }
   ],
   "builders": [
-    {"id": "builder-javascript", "slug": "javascript", "name": "JavaScript builder"}
+    {
+      "id": "builder-javascript",
+      "slug": "javascript",
+      "name": "JavaScript builder"
+    }
   ]
 }
 ```
@@ -158,4 +167,3 @@ Tests cover migration constraints, scoped uniqueness, equal invariant package re
 8. After normalized import and local export have passed, retire the generic registry tables/models and legacy seeding path in a separately reviewable cleanup step. Only then consider an explicitly authorized remote publication.
 
 Rollback is staged. If import or readback fails, leave the legacy source and exporter intact and do not drop its tables. If application code must be rolled back after normalized migrations, preserve the normalized tables and return to the last validated exporter rather than destructively reversing source data. Remote rollback is handled by the publisher’s revision-scoped artifact policy, not by a local database rollback.
-

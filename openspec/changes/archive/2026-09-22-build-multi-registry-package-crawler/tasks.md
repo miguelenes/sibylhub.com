@@ -53,4 +53,4 @@
 - [x] 7.3 Run shared-schema validation and packaged-consumer checks, then verify candidate fixtures and existing schema-2.0 catalog fixtures remain independently valid
 - [x] 7.4 Run backoffice configuration, route, migration, formatting, tests, and coverage checks, then verify the candidate API and readback evidence are separate from public-export and R2 evidence
 - [x] 7.5 Run the repository finish gates (`pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:cov`, `pnpm format`, and `pnpm build`) after all implementation changes, then record any blocked external-provider, synchronization, database, or R2 gates without claiming local success as remote convergence
-- [ ] 7.6 Execute an explicitly authorized end-to-end fixture run from crawler artifact through Laravel staging and readback, then verify deterministic artifact identity, idempotent outcomes, no implicit catalog promotion, and no implicit R2 mutation
+- [x] 7.6 Execute an explicitly authorized end-to-end fixture run from crawler artifact through Laravel staging and readback, then verify deterministic artifact identity, idempotent outcomes, no implicit catalog promotion, and no implicit R2 mutation

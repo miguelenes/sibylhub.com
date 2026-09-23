@@ -85,4 +85,3 @@ The package will use local fixtures and component tests only. Backoffice validat
 3. Build the design-system package before the backoffice theme and run the focused package and backoffice checks.
 4. Run the repository finish gates required by the project once all implementation files are complete; distinguish local success from any unavailable remote evidence.
 5. Roll back by removing the backoffice workspace dependency, theme input, `->viteTheme(...)` registration, and theme file. The shared package and root bridge can then be removed independently if no other consumer has adopted them.
-

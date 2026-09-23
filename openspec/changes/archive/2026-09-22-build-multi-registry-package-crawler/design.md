@@ -79,14 +79,14 @@ The public behavior of `fetchTopPackages` is “bounded package discovery,” no
 
 The first release will use these source strategies:
 
-| Source | Discovery strategy | Ranking claim |
-| --- | --- | --- |
-| npm | Official search API with configured framework/category keyword seeds, pagination, deduplication, and detail lookup | Search-ranked within each seed; not global unless the endpoint explicitly provides that semantics |
-| Packagist | Packagist search/list endpoints with configured vendors and framework seeds, pagination, and package detail metadata | Seed/vendor-ranked; no universal global popularity claim |
-| PyPI | Simple API for project-name discovery plus a versioned maintained seed list for framework/category coverage; JSON detail lookup | Curated/seed-ranked unless an explicitly configured ranking source is added |
-| crates.io | Official API pages sorted by downloads with required user-agent and bounded pagination | Registry download-ranked for the requested sort and time of crawl |
-| Go | Configured module paths queried through Go Proxy and metadata pages from pkg.go.dev | Module-seed-ranked; Go Proxy has no global top-package endpoint |
-| libs.tech | Curated category, alternative, comparison, and package pages | Curated-source order; never represented as objective global rank |
+| Source    | Discovery strategy                                                                                                              | Ranking claim                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| npm       | Official search API with configured framework/category keyword seeds, pagination, deduplication, and detail lookup              | Search-ranked within each seed; not global unless the endpoint explicitly provides that semantics |
+| Packagist | Packagist search/list endpoints with configured vendors and framework seeds, pagination, and package detail metadata            | Seed/vendor-ranked; no universal global popularity claim                                          |
+| PyPI      | Simple API for project-name discovery plus a versioned maintained seed list for framework/category coverage; JSON detail lookup | Curated/seed-ranked unless an explicitly configured ranking source is added                       |
+| crates.io | Official API pages sorted by downloads with required user-agent and bounded pagination                                          | Registry download-ranked for the requested sort and time of crawl                                 |
+| Go        | Configured module paths queried through Go Proxy and metadata pages from pkg.go.dev                                             | Module-seed-ranked; Go Proxy has no global top-package endpoint                                   |
+| libs.tech | Curated category, alternative, comparison, and package pages                                                                    | Curated-source order; never represented as objective global rank                                  |
 
 Go is a supported first-release adapter selected through `--ecosystems go` and included by `crawl:all`; the fixed script surface does not add a separate `crawl:go` command because the requested scripts are limited to the four registry-specific commands and `crawl:libs-tech`.
 
