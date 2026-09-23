@@ -1,0 +1,152 @@
+import { createHash } from "node:crypto";
+import OpenAI from "openai";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+  EtcdClient,
+  ProxyClient,
+  SeedClient,
+  spawnApp,
+  startOpenAiUpstream,
+  waitConfigPropagation,
+  type OpenAiUpstream,
+  type SpawnedApp,
+} from "../harness/index.js";
+
+// E2E: prompt-response cache policy, identical-request short-circuit.
+// With a `CachePolicy{applies_to: "all", enabled: true}` in scope, two
+// identical chat completions must result in the upstream being hit only
+// once — the second response is served from cache. The gateway emits
+// a public `x-sibylhub-cache: hit|miss` response header (per
+// `docs/api-proxy.md` §3 — `hit` if served from cache, `miss`
+// otherwise; absent for streaming responses and absent when no
+// enabled cache_policy applies to the request). The header is
+// observed by cp-api and the dashboard's /logs view via the
+// telemetry path; both the header and the persisted
+// `usage_events.cache_status` field expose the cache outcome.
+//
+// Reference: OpenAI Chat Completions API spec
+// (https://platform.openai.com/docs/api-reference/chat/create) for
+// the request/response shape.
+
+const CALLER_PLAINTEXT = "sk-cache-e2e-caller";
+const CALLER_KEY_HASH = createHash("sha256")
+  .update(CALLER_PLAINTEXT)
+  .digest("hex");
+
+describe("cache policy e2e: identical request hits cache", () => {
+  let app: SpawnedApp | undefined;
+  let upstream: OpenAiUpstream | undefined;
+  let seed: SeedClient | undefined;
+  let etcdReachable = false;
+
+  beforeAll(async () => {
+    const etcd = new EtcdClient();
+    etcdReachable = await etcd.ping();
+    if (!etcdReachable) return;
+
+    upstream = await startOpenAiUpstream();
+    app = await spawnApp();
+    seed = new SeedClient(etcd, app.etcdPrefix);
+
+    const pk = await seed.createProviderKey({
+      display_name: "cache-e2e-pk",
+      secret: "sk-mock",
+      api_base: `${upstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: "cache-e2e",
+      provider: "openai",
+      model_name: "gpt-4o-mini",
+      provider_key_id: pk.id,
+    });
+    // A policy requires `name`, `enabled`, and `applies_to` to take
+    // effect.
+    await seed.createCachePolicy({
+      name: "cache-e2e-policy",
+      enabled: true,
+      applies_to: "all",
+    });
+    await seed.createApiKey({
+      key_hash: CALLER_KEY_HASH,
+      allowed_models: ["cache-e2e"],
+    });
+    const proxy = new ProxyClient(app.proxyUrl, CALLER_PLAINTEXT);
+    await waitConfigPropagation(async () => (await proxy.listModels()).status === 200);
+  });
+
+  afterAll(async () => {
+    await app?.exit();
+    await upstream?.close();
+  });
+
+  test("second identical request is served from cache, upstream not re-hit", async (ctx) => {
+    if (!etcdReachable || !app || !upstream) {
+      ctx.skip();
+      return;
+    }
+
+    const client = new OpenAI({
+      apiKey: CALLER_PLAINTEXT,
+      baseURL: `${app.proxyUrl}/v1`,
+    });
+
+    const baseline = upstream.receivedRequests.length;
+
+    // First call with a fresh fingerprint — cache miss, upstream hit.
+    const first = await client.chat.completions.create({
+      model: "cache-e2e",
+      messages: [{ role: "user", content: "cached prompt" }],
+    });
+    expect(upstream.receivedRequests.length).toBe(baseline + 1);
+
+    // Second identical call — cache hit, upstream NOT re-hit.
+    const second = await client.chat.completions.create({
+      model: "cache-e2e",
+      messages: [{ role: "user", content: "cached prompt" }],
+    });
+    expect(upstream.receivedRequests.length).toBe(baseline + 1);
+
+    // Cache must replay the original response, not synthesize a new
+    // one — caller can't distinguish cache hit from upstream re-call.
+    expect(second.choices[0]?.message.content).toBe(
+      first.choices[0]?.message.content,
+    );
+    expect(second.choices[0]?.message.role).toBe("assistant");
+
+    // Caller-observable cache signaling — the gateway emits an
+    // `x-sibylhub-cache: hit|miss` header (`miss` on first call when
+    // an enabled policy applies, `hit` on identical follow-up).
+    // The header is absent when no enabled cache_policy matches
+    // the request — that "no header" outcome is pinned in the Rust
+    // unit `disabled_cache_policy_does_not_cache_and_emits_no_header`.
+    // The OpenAI SDK swallows response headers, so drop down to
+    // fetch directly to verify. Use a fresh prompt so this header
+    // check doesn't reuse the cache entry built up by the SDK calls
+    // above.
+    const headerCheckHeaders = {
+      authorization: `Bearer ${CALLER_PLAINTEXT}`,
+      "content-type": "application/json",
+    };
+    const headerCheckBody = JSON.stringify({
+      model: "cache-e2e",
+      messages: [{ role: "user", content: "header-check-prompt" }],
+    });
+    const missResp = await fetch(`${app.proxyUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: headerCheckHeaders,
+      body: headerCheckBody,
+    });
+    expect(missResp.status).toBe(200);
+    expect(missResp.headers.get("x-sibylhub-cache")).toBe("miss");
+    await missResp.text();
+
+    const hitResp = await fetch(`${app.proxyUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: headerCheckHeaders,
+      body: headerCheckBody,
+    });
+    expect(hitResp.status).toBe(200);
+    expect(hitResp.headers.get("x-sibylhub-cache")).toBe("hit");
+    await hitResp.text();
+  });
+});

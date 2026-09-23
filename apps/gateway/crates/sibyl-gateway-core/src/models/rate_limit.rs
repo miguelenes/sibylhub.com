@@ -1,0 +1,142 @@
+//! Rate-limit configuration attached to Models and ApiKeys.
+//!
+//! All fields are optional; absence means "no limit on that dimension".
+//! Windows per spec §3:
+//! - `rps` — 1s fixed window (request count only)
+//! - `tpm`/`rpm` — 60s fixed window
+//! - `rph` — 3600s fixed window (request count only)
+//! - `tpd`/`rpd` — 86400s fixed window
+//! - `concurrency` — semaphore capacity (not windowed)
+//!
+//! Token-rate counters are minute/day only; there is no `tps` or `tph`
+//! field.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RateLimit {
+    /// Tokens per 60-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tpm: Option<u64>,
+
+    /// Tokens per 86,400-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tpd: Option<u64>,
+
+    /// Requests per 1-second window. There is no per-second token limit field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rps: Option<u64>,
+
+    /// Requests per 60-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm: Option<u64>,
+
+    /// Requests per 3,600-second window. There is no per-hour token limit field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rph: Option<u64>,
+
+    /// Requests per 86,400-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpd: Option<u64>,
+
+    /// Max concurrent in-flight requests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
+}
+
+impl RateLimit {
+    pub const fn is_unrestricted(&self) -> bool {
+        self.tpm.is_none()
+            && self.tpd.is_none()
+            && self.rps.is_none()
+            && self.rpm.is_none()
+            && self.rph.is_none()
+            && self.rpd.is_none()
+            && self.concurrency.is_none()
+    }
+}
+
+/// Limits for one API key's calls to one MCP server
+/// (`ApiKey::mcp_rate_limits`).
+///
+/// Carries only the request-count dimensions of [`RateLimit`]: an MCP
+/// `tools/call` commits no tokens, so a token-rate cap here would never be
+/// consumed — the shape leaves `tpm`/`tpd` out rather than accepting a knob
+/// that is silently inert.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpRateLimit {
+    /// Tool calls per 1-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rps: Option<u64>,
+
+    /// Tool calls per 60-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm: Option<u64>,
+
+    /// Tool calls per 3,600-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rph: Option<u64>,
+
+    /// Tool calls per 86,400-second window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpd: Option<u64>,
+
+    /// Max concurrent in-flight tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
+}
+
+impl McpRateLimit {
+    pub const fn is_unrestricted(&self) -> bool {
+        self.rps.is_none()
+            && self.rpm.is_none()
+            && self.rph.is_none()
+            && self.rpd.is_none()
+            && self.concurrency.is_none()
+    }
+}
+
+impl From<&McpRateLimit> for RateLimit {
+    fn from(mcp: &McpRateLimit) -> Self {
+        Self {
+            tpm: None,
+            tpd: None,
+            rps: mcp.rps,
+            rpm: mcp.rpm,
+            rph: mcp.rph,
+            rpd: mcp.rpd,
+            concurrency: mcp.concurrency,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_unrestricted() {
+        assert!(RateLimit::default().is_unrestricted());
+    }
+
+    #[test]
+    fn omits_none_fields_on_serialise() {
+        let rl = RateLimit {
+            rpm: Some(60),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&rl).unwrap();
+        assert_eq!(json["rpm"], 60);
+        assert!(json.get("tpm").is_none());
+        assert!(json.get("concurrency").is_none());
+    }
+
+    #[test]
+    fn tolerates_unknown_fields_for_forward_compat() {
+        // cp-api may ship new fields ahead of the DP rolling out; serde must
+        // accept them (the write path still rejects them via the strict
+        // schema validators in models/schema.rs).
+        let rl: RateLimit = serde_json::from_str(r#"{"rpm": 10, "extra": 1}"#).unwrap();
+        assert_eq!(rl.rpm, Some(10));
+    }
+}

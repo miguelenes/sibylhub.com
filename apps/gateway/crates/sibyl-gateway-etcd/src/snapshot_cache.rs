@@ -1,0 +1,475 @@
+//! On-disk snapshot cache for offline resilience.
+//!
+//! Goal (prd-09 §9.7.2): the DP keeps serving `/v1/chat/completions`
+//! from the last known etcd contents when the control plane is
+//! unreachable — including across full container restarts.
+//!
+//! Approach:
+//!
+//! - The supervisor calls [`SnapshotCache::store`] after each
+//!   successful apply (resync, put, delete). The on-disk file is the
+//!   serialised list of [`RawEntry`] that produced the current
+//!   in-memory snapshot, plus the etcd revision they came from.
+//! - At boot, the supervisor calls [`SnapshotCache::load`] before
+//!   touching etcd. If the file exists and parses, the entries are
+//!   handed to `apply_resync` and the proxy starts serving traffic
+//!   immediately. The first successful etcd `load_all` then
+//!   overwrites the cache with fresh state.
+//! - If etcd never comes back, the cached snapshot keeps serving
+//!   forever — the DP is degraded (no new models / keys appear) but
+//!   not down.
+//!
+//! Atomicity: `store` writes to `<path>.tmp` first, fsyncs, then
+//! renames over the destination. A torn write never corrupts the
+//! committed file. Disabled when [`SnapshotCache::disabled`] is used
+//! (the default unless `managed.snapshot_cache_enabled` is true).
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
+
+use crate::provider::RawEntry;
+use crate::supervisor::StaleServing;
+
+/// File-format version. Bumped whenever the wire shape of [`CachedFile`]
+/// changes incompatibly so old DPs ignore future caches instead of
+/// crashing on a stale-format upgrade. The `stale` section added for
+/// #871 is additive (defaulted on read, ignored by older DPs), so it
+/// stays at 1.
+const FORMAT_VERSION: u32 = 1;
+
+/// Owned, sync-or-async-safe snapshot cache. Cheap to clone — internally
+/// holds an `Arc<Inner>` that serialises writes through a `Mutex`.
+#[derive(Clone)]
+pub struct SnapshotCache {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    /// Some(path) → enabled; None → no-op.
+    path: Option<PathBuf>,
+    /// Serialise concurrent writes so the tmp-file rename dance can't
+    /// race with itself, and carry the highest revision committed so far
+    /// so they also commit in order. Reads are unguarded — they go
+    /// through OS caches and the rename is atomic.
+    ///
+    /// Applies spawn independent tasks, so a newer revision may acquire
+    /// the lock first. Never let a late older task replace it. `i64::MIN`
+    /// until the first write so revision zero also commits.
+    write_lock: Mutex<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedFile {
+    version: u32,
+    revision: i64,
+    entries: Vec<CachedEntry>,
+    /// Last-known-good values pinned for keys whose current bytes (in
+    /// `entries`) are rejected (#871). Restored before the boot resync so
+    /// stale-serving rows survive a restart. Defaulted so pre-#871 cache
+    /// files keep loading.
+    #[serde(default)]
+    stale: Vec<CachedStaleEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedEntry {
+    key: String,
+    /// Base64 because etcd values are byte arrays — typically JSON, but
+    /// the cache must round-trip whatever the supervisor saw.
+    value_b64: String,
+    revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedStaleEntry {
+    key: String,
+    /// Base64 of the pinned last-known-good value bytes.
+    value_b64: String,
+    /// Revision the pinned value was accepted at.
+    revision: i64,
+    /// Unix seconds when stale serving began — persisted so the reported
+    /// staleness age stays continuous across restarts.
+    since_unix_secs: u64,
+}
+
+/// The parsed contents of a cache file: the raw entry set, the revision
+/// it reflects, and the pinned last-known-good values (#871).
+#[derive(Debug, Clone)]
+pub struct CachedSnapshot {
+    pub entries: Vec<RawEntry>,
+    pub revision: i64,
+    pub stale: Vec<StaleServing>,
+}
+
+impl SnapshotCache {
+    /// Construct a cache backed by `path`. The file is created on the
+    /// first successful [`Self::store`]; missing path on [`Self::load`]
+    /// is treated as "no cache yet".
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                path: Some(path.into()),
+                write_lock: Mutex::new(i64::MIN),
+            }),
+        }
+    }
+
+    /// No-op cache. Returned when persistence is disabled (e.g. when
+    /// `managed.snapshot_cache_path` is empty). [`Self::load`] always
+    /// returns `None` and [`Self::store`] is a quiet success.
+    pub fn disabled() -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                path: None,
+                write_lock: Mutex::new(i64::MIN),
+            }),
+        }
+    }
+
+    pub(crate) fn is_enabled(&self) -> bool {
+        self.inner.path.is_some()
+    }
+
+    /// Read the cached snapshot, or `None` if no usable file exists.
+    /// "Usable" means: the file is present, parses as JSON, declares a
+    /// recognised [`FORMAT_VERSION`], and every entry's value decodes.
+    /// Anything else is logged and treated as cache-miss so a corrupt
+    /// file can never wedge the DP.
+    pub fn load(&self) -> Option<CachedSnapshot> {
+        let path = self.inner.path.as_ref()?;
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "snapshot cache read failed");
+                return None;
+            }
+        };
+        let cached: CachedFile = match serde_json::from_slice(&bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "snapshot cache parse failed; ignoring");
+                return None;
+            }
+        };
+        if cached.version != FORMAT_VERSION {
+            tracing::warn!(
+                got = cached.version,
+                want = FORMAT_VERSION,
+                "snapshot cache format mismatch; ignoring",
+            );
+            return None;
+        }
+        let entries: Result<Vec<_>, _> = cached
+            .entries
+            .into_iter()
+            .map(|e| {
+                B64.decode(&e.value_b64).map(|value| RawEntry {
+                    key: e.key,
+                    value,
+                    revision: e.revision,
+                })
+            })
+            .collect();
+        let stale: Result<Vec<_>, _> = cached
+            .stale
+            .into_iter()
+            .map(|s| {
+                B64.decode(&s.value_b64).map(|value| {
+                    StaleServing::new(
+                        RawEntry {
+                            key: s.key,
+                            value,
+                            revision: s.revision,
+                        },
+                        s.since_unix_secs,
+                    )
+                })
+            })
+            .collect();
+        match (entries, stale) {
+            (Ok(entries), Ok(stale)) => Some(CachedSnapshot {
+                entries,
+                revision: cached.revision,
+                stale,
+            }),
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::warn!(error = %e, "snapshot cache entry decode failed; ignoring");
+                None
+            }
+        }
+    }
+
+    /// Write the given entries + revision + pinned last-known-good values
+    /// atomically. Errors are logged-and-swallowed because losing the
+    /// cache is not worth blowing up an otherwise-healthy DP — at worst
+    /// the next restart rebuilds from etcd.
+    pub async fn store(&self, entries: &[RawEntry], revision: i64, stale: &[StaleServing]) {
+        if !self.is_enabled() {
+            return;
+        }
+        let entries: Vec<_> = entries.iter().map(encode_entry).collect();
+        let stale: Vec<_> = stale.iter().map(encode_stale).collect();
+        self.store_encoded(&entries, revision, &stale).await;
+    }
+
+    pub(crate) async fn store_encoded(
+        &self,
+        entries: &[Arc<[u8]>],
+        revision: i64,
+        stale: &[Arc<[u8]>],
+    ) {
+        let Some(path) = self.inner.path.as_ref() else {
+            return;
+        };
+        let mut committed = self.inner.write_lock.lock().await;
+        // A write that lost the serialisation race to a NEWER apply has
+        // nothing to add: committing it would roll the cache back to a
+        // snapshot the gateway has already moved past, and the next
+        // restart would then serve it. Equal revisions still commit — a
+        // delete flushes at the current revision floor, so same-revision
+        // writes carry different content.
+        if revision < *committed {
+            return;
+        }
+        if let Err(e) = atomic_write(path, entries, revision, stale).await {
+            tracing::warn!(error = %e, path = %path.display(), "snapshot cache write failed");
+            return;
+        }
+        *committed = revision;
+    }
+}
+
+pub(crate) fn encode_entry(entry: &RawEntry) -> Arc<[u8]> {
+    serde_json::to_vec(&CachedEntry {
+        key: entry.key.clone(),
+        value_b64: B64.encode(&entry.value),
+        revision: entry.revision,
+    })
+    .expect("snapshot entries contain only strings and integers")
+    .into()
+}
+
+pub(crate) fn encode_stale(stale: &StaleServing) -> Arc<[u8]> {
+    serde_json::to_vec(&CachedStaleEntry {
+        key: stale.entry.key.clone(),
+        value_b64: B64.encode(&stale.entry.value),
+        revision: stale.entry.revision,
+        since_unix_secs: stale.since_unix_secs,
+    })
+    .expect("stale entries contain only strings and integers")
+    .into()
+}
+
+/// Preserve the v1 JSON envelope while writing shared records through a
+/// bounded buffer. No full-snapshot byte buffer is assembled per apply.
+async fn atomic_write(
+    path: &Path,
+    entries: &[Arc<[u8]>],
+    revision: i64,
+    stale: &[Arc<[u8]>],
+) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+    let tmp = path.with_extension("tmp");
+    {
+        let mut writer = BufWriter::with_capacity(64 * 1024, tokio::fs::File::create(&tmp).await?);
+        writer
+            .write_all(
+                format!(r#"{{"version":{FORMAT_VERSION},"revision":{revision},"entries":["#)
+                    .as_bytes(),
+            )
+            .await?;
+        write_records(&mut writer, entries).await?;
+        writer.write_all(b"],\"stale\":[").await?;
+        write_records(&mut writer, stale).await?;
+        writer.write_all(b"]}").await?;
+        writer.flush().await?;
+        writer.get_ref().sync_all().await?;
+    }
+    tokio::fs::rename(&tmp, path).await
+}
+
+async fn write_records(
+    writer: &mut BufWriter<tokio::fs::File>,
+    records: &[Arc<[u8]>],
+) -> std::io::Result<()> {
+    for (index, record) in records.iter().enumerate() {
+        if index > 0 {
+            writer.write_all(b",").await?;
+        }
+        writer.write_all(record).await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn entry(key: &str, value: &[u8], rev: i64) -> RawEntry {
+        RawEntry {
+            key: key.into(),
+            value: value.to_vec(),
+            revision: rev,
+        }
+    }
+
+    #[tokio::test]
+    async fn round_trips_entries() {
+        let dir = tempdir().unwrap();
+        let cache = SnapshotCache::new(dir.path().join("snap.json"));
+        let entries = vec![
+            entry("/sibyl-gateway/models/m-1", br#"{"name":"m1"}"#, 7),
+            entry("/sibyl-gateway/api_keys/k-1", b"\xff\x00\x01raw", 8),
+        ];
+        cache.store(&entries, 42, &[]).await;
+
+        let cached = cache.load().expect("cache file exists");
+        assert_eq!(cached.revision, 42);
+        assert_eq!(cached.entries, entries);
+        assert!(cached.stale.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_write_that_lost_its_race_cannot_roll_the_cache_back() {
+        // The supervisor spawns one write per apply and does not order
+        // them, and `store` serialises its snapshot before taking the
+        // write lock — so a write for an older apply can reach the lock
+        // after a newer one. Committing it would roll the cache back to
+        // a snapshot the gateway has already moved past, and the next
+        // restart would serve it. Sequential calls stand in for the race:
+        // the lock is what the race resolves to, and this is the order it
+        // can resolve to.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        let cache = SnapshotCache::new(&path);
+
+        let newer = vec![entry("/sibyl-gateway/models/m-1", br#"{"name":"new"}"#, 9)];
+        let older = vec![entry("/sibyl-gateway/models/m-1", br#"{"name":"old"}"#, 8)];
+        cache.store(&newer, 9, &[]).await;
+        cache.store(&older, 8, &[]).await;
+
+        let cached = cache.load().expect("cache file exists");
+        assert_eq!(
+            cached.revision, 9,
+            "the older apply must not overwrite the newer one",
+        );
+        assert_eq!(cached.entries, newer);
+    }
+
+    #[tokio::test]
+    async fn a_write_at_the_same_revision_still_commits() {
+        // A delete flushes at the current revision floor rather than a
+        // revision of its own, so same-revision writes carry different
+        // content and the guard above must not swallow them.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        let cache = SnapshotCache::new(&path);
+
+        let before = vec![entry("/sibyl-gateway/models/m-1", br#"{"name":"m1"}"#, 9)];
+        cache.store(&before, 9, &[]).await;
+        cache.store(&[], 9, &[]).await;
+
+        let cached = cache.load().expect("cache file exists");
+        assert!(
+            cached.entries.is_empty(),
+            "a same-revision write must still commit",
+        );
+    }
+
+    #[tokio::test]
+    async fn round_trips_stale_entries() {
+        let dir = tempdir().unwrap();
+        let cache = SnapshotCache::new(dir.path().join("snap.json"));
+        let entries = vec![entry("/sibyl-gateway/models/m-1", br#"{"bad":true}"#, 9)];
+        let stale = vec![StaleServing::new(
+            entry("/sibyl-gateway/models/m-1", br#"{"name":"last-good"}"#, 7),
+            1_770_000_000,
+        )];
+        cache.store(&entries, 9, &stale).await;
+
+        let cached = cache.load().expect("cache file exists");
+        assert_eq!(cached.stale, stale);
+    }
+
+    /// A pre-#871 cache file (no `stale` section) must keep loading.
+    #[tokio::test]
+    async fn legacy_file_without_stale_section_loads() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "revision": 5,
+            "entries": [
+                {"key": "/sibyl-gateway/models/m-1", "value_b64": B64.encode(br#"{"a":1}"#), "revision": 5}
+            ],
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&legacy).unwrap())
+            .await
+            .unwrap();
+        let cached = SnapshotCache::new(&path).load().expect("legacy file loads");
+        assert_eq!(cached.entries.len(), 1);
+        assert!(cached.stale.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_file_returns_none() {
+        let dir = tempdir().unwrap();
+        let cache = SnapshotCache::new(dir.path().join("never-written.json"));
+        assert!(cache.load().is_none());
+    }
+
+    #[tokio::test]
+    async fn disabled_cache_is_a_noop() {
+        let cache = SnapshotCache::disabled();
+        cache.store(&[entry("/a", b"x", 1)], 1, &[]).await;
+        assert!(cache.load().is_none());
+    }
+
+    #[tokio::test]
+    async fn corrupt_file_is_treated_as_cache_miss() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        tokio::fs::write(&path, b"this is not json").await.unwrap();
+        let cache = SnapshotCache::new(&path);
+        assert!(cache.load().is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_format_version_is_ignored() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        let bogus = serde_json::json!({
+            "version": 99,
+            "revision": 1,
+            "entries": [],
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&bogus).unwrap())
+            .await
+            .unwrap();
+        let cache = SnapshotCache::new(&path);
+        assert!(cache.load().is_none());
+    }
+
+    #[tokio::test]
+    async fn store_overwrites_atomically() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        let cache = SnapshotCache::new(&path);
+        cache.store(&[entry("/a", b"v1", 1)], 1, &[]).await;
+        cache.store(&[entry("/a", b"v2", 2)], 2, &[]).await;
+        let cached = cache.load().unwrap();
+        assert_eq!(cached.revision, 2);
+        assert_eq!(cached.entries[0].value, b"v2".to_vec());
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "sibyl-gateway-redis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway: shared Redis connection layer (single / cluster / sentinel) for cache + rate-limit stores"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+redis.workspace = true
+arc-swap.workspace = true
+tokio.workspace = true
+tracing.workspace = true

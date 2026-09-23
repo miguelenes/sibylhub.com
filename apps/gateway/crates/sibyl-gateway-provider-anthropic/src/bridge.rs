@@ -1,0 +1,1261 @@
+//! `AnthropicBridge` — concrete [`Bridge`] for the Claude Messages API.
+//!
+//! Mirrors `OpenAiBridge`'s transport shape but differs in three important
+//! places:
+//!
+//! - **Auth header**: `x-api-key: <key>` + `anthropic-version` (Bearer not
+//!   accepted).
+//! - **Endpoint**: `POST {base}/v1/messages`. We append `/v1/messages`
+//!   ourselves because the Model's `api_base` is the host, not the
+//!   messages endpoint.
+//! - **Stream model**: event-typed SSE where only a couple of variants
+//!   yield user-visible chunks. We drive that via `StreamState`.
+//!
+//! Error mapping is identical to OpenAi — the `BridgeError` contract from
+//! PR #6 applies verbatim.
+
+use sibyl_gateway_hub::url_cache::cached_endpoint_url;
+use sibyl_gateway_hub::{
+    Bridge, BridgeContext, BridgeError, ChatChunk, ChatChunkStream, ChatFormat, ChatResponse,
+    SseDecoder, SseEvent,
+};
+use async_trait::async_trait;
+use futures::StreamExt;
+use reqwest::{header, Client, StatusCode};
+use std::time::{Duration, Instant};
+
+use sibyl_gateway_hub::structured_output::{response_into_fake_stream_chunks, unwrap_json_tool_call};
+
+use crate::wire::{
+    build_request, inject_cache_breakpoints, response_into_chat_response, split_system,
+    structured_output_for, AnthropicResponse, AnthropicStreamEvent, StreamState, StructuredOutput,
+};
+
+/// Matches the API header that Anthropic bakes backwards-compat into.
+/// Pinned here rather than config-driven so each bridge version ships
+/// a known compatible version string; bumping it is a code change.
+pub const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Fallback host used when the Model doesn't set `api_base` and the
+/// Provider enum's default is missing. Real operators set `api_base`
+/// on the Model to point at the Anthropic-owned endpoint they use.
+pub const ANTHROPIC_DEFAULT_BASE: &str = "https://api.anthropic.com";
+
+pub struct AnthropicBridge {
+    client: Client,
+    api_version: &'static str,
+}
+
+impl AnthropicBridge {
+    pub fn new() -> Self {
+        Self::with_client(default_client())
+    }
+
+    pub fn with_client(client: Client) -> Self {
+        Self {
+            client,
+            api_version: ANTHROPIC_VERSION,
+        }
+    }
+
+    /// The client this dispatch runs on: the bridge's shared one, unless
+    /// the resolved Provider Key carries its own connection overrides
+    /// (TLS trust settings, a name-resolution address).
+    fn client_for(&self, ctx: &BridgeContext) -> Client {
+        sibyl_gateway_hub::upstream_tls::client_for_provider_key(
+            &self.client,
+            ctx.provider_key.upstream_connection().as_ref(),
+        )
+    }
+
+    pub fn with_api_version(mut self, v: &'static str) -> Self {
+        self.api_version = v;
+        self
+    }
+}
+
+impl Default for AnthropicBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn default_client() -> Client {
+    sibyl_gateway_hub::client_builder()
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
+/// Path suffixes the Anthropic bridge appends. If an operator
+/// accidentally pastes a fuller form into `api_base`, strip the suffix
+/// so request building still produces the right URL.
+const ANTHROPIC_ENDPOINT_SUFFIXES: &[&str] = &["/v1/messages", "/v1"];
+
+/// Tolerate the common variations of `api_base` an operator might
+/// paste for the Anthropic upstream. Accepted forms:
+///
+/// - `https://api.anthropic.com` (canonical)
+/// - `https://api.anthropic.com/` (trailing slash)
+/// - `https://api.anthropic.com/v1` (extra `/v1` segment — common copy-paste
+///   habit from OpenAI conventions)
+/// - `https://api.anthropic.com/v1/messages` (full upstream URL pasted)
+///
+/// All collapse to the canonical bare host. The bridge then appends
+/// `/v1/messages` at request time.
+fn normalize_api_base(base: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    for suffix in ANTHROPIC_ENDPOINT_SUFFIXES {
+        if let Some(rest) = trimmed.strip_suffix(suffix) {
+            return rest.trim_end_matches('/').to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// The `apis.messages` base this key declares, or `""`. Feeds the URL
+/// cache fingerprint so editing the entry rebuilds the cached URL, the
+/// same way editing `api_base` does.
+fn declared_messages_base(ctx: &BridgeContext) -> &str {
+    ctx.provider_key
+        .apis
+        .as_ref()
+        .and_then(|apis| apis.messages.as_ref())
+        .and_then(|entry| entry.base.as_deref())
+        .unwrap_or("")
+}
+
+fn resolve_base(ctx: &BridgeContext) -> Result<String, BridgeError> {
+    // A Provider Key that declares `apis.messages` names where the
+    // Anthropic wire lives on this upstream, which is where this bridge
+    // dispatches — so the declaration has to reach here too, or the
+    // `/v1/messages` passthrough and the translated path would send the
+    // same upstream route to two different hosts.
+    if let Some(base) = ctx
+        .provider_key
+        .apis
+        .as_ref()
+        .and_then(|apis| apis.messages.as_ref())
+        .and_then(|entry| entry.base.as_deref())
+        .map(str::trim)
+        .filter(|base| !base.is_empty())
+    {
+        return Ok(normalize_api_base(base));
+    }
+    match ctx.provider_key.api_base.as_deref() {
+        Some(b) if !b.trim().is_empty() => Ok(normalize_api_base(b.trim())),
+        _ => {
+            // Family-bridge safety: when `AnthropicBridge` is the
+            // family registration (registered via
+            // `register_family(Adapter::Anthropic, ...)`) AND the
+            // dispatching `ProviderKey.provider` identifies a vendor
+            // that ISN'T anthropic, refuse to fall back to
+            // `ANTHROPIC_DEFAULT_BASE` — that would silently route the
+            // vendor's API key to `api.anthropic.com`. Mirrors the
+            // OpenAI-family guard in
+            // `crates/sibyl-gateway-provider-openai/src/bridge.rs::resolve_base`.
+            //
+            // Pre-Phase-A rows (empty `ProviderKey.provider`) fall
+            // through to the historical default-base path unchanged.
+            let pk_vendor_raw = ctx.provider_key.provider.as_str();
+            let pk_vendor_normalized = pk_vendor_raw.trim().to_ascii_lowercase();
+            if !pk_vendor_normalized.is_empty() && pk_vendor_normalized != "anthropic" {
+                // Operator-facing detail (route, provider topology,
+                // remediation steps) goes to logs only — keep the
+                // customer-visible 500 body short and free of
+                // internal-product taxonomy (cp-api / adapter_map /
+                // provider_metadata field names are not part of any
+                // wire contract a customer should depend on).
+                tracing::error!(
+                    target: "sibyl_gateway_provider_anthropic::bridge",
+                    pk_display_name = %ctx.provider_key.display_name,
+                    pk_vendor = %pk_vendor_raw,
+                    "provider_key has no api_base; family bridge refusing fallback to \
+                     api.anthropic.com. Operator action: populate `api_base` on the \
+                     ProviderKey resource (managed deployments: via adapter_map / \
+                     provider_metadata.api_base_url on the control plane; standalone: \
+                     directly on the resource)."
+                );
+                return Err(BridgeError::InvalidUpstreamConfig(format!(
+                    "provider_key for vendor {pk_vendor_raw:?} has no upstream base URL \
+                     configured"
+                )));
+            }
+            Ok(ANTHROPIC_DEFAULT_BASE.to_string())
+        }
+    }
+}
+
+fn api_key(ctx: &BridgeContext) -> Result<&str, BridgeError> {
+    let k = &ctx.provider_key.api_key;
+    if k.is_empty() {
+        return Err(BridgeError::InvalidUpstreamCredentials(
+            "provider_key.api_key is empty".into(),
+        ));
+    }
+    // Reject a secret that can't be a valid `x-api-key` header value
+    // (control bytes etc.) up front as customer-fixable config, mirroring
+    // the openai / azure bridges — otherwise reqwest's `.header()` fails
+    // later with an opaque builder error (#367).
+    if header::HeaderValue::from_str(k).is_err() {
+        return Err(BridgeError::InvalidUpstreamCredentials(
+            "provider_key.api_key contains invalid header characters".into(),
+        ));
+    }
+    Ok(k.as_str())
+}
+
+fn upstream_model(ctx: &BridgeContext) -> Result<&str, BridgeError> {
+    ctx.model
+        .model_name
+        .as_deref()
+        .ok_or_else(|| BridgeError::InvalidUpstreamConfig("model.model_name missing".into()))
+}
+
+/// Apply the Model's `auto_prompt_caching` setting to the outbound
+/// request. A no-op unless the operator enabled it; the wire-level
+/// stand-down (a caller who set their own markers wins) lives in
+/// [`inject_cache_breakpoints`]. Shared by the streaming and
+/// non-streaming paths so they can't drift.
+fn maybe_inject_cache_breakpoints(
+    body: &mut crate::wire::AnthropicRequest<'_>,
+    ctx: &BridgeContext,
+) {
+    if let Some(apc) = ctx
+        .model
+        .auto_prompt_caching
+        .as_ref()
+        .filter(|apc| apc.enabled)
+    {
+        inject_cache_breakpoints(body, apc.ttl_or_default().as_wire_str());
+    }
+}
+
+async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> BridgeError {
+    sibyl_gateway_hub::capture_upstream_error_http(
+        status,
+        resp,
+        sibyl_gateway_hub::UpstreamWire::Anthropic,
+        parse_anthropic_error_envelope,
+    )
+    .await
+}
+
+/// Parse the Anthropic error envelope:
+///
+/// ```json
+/// {"type": "error", "error": {"type": "...", "message": "..."}}
+/// ```
+///
+/// Anthropic does not carry `code` or `param` fields — those stay
+/// `None`. The translation table at render time derives an OpenAI
+/// `code` from `kind` when crossing wire formats.
+///
+/// Reference: <https://docs.anthropic.com/en/api/errors>
+fn parse_anthropic_error_envelope(body: &[u8]) -> Option<sibyl_gateway_hub::UpstreamErrorView> {
+    #[derive(serde::Deserialize)]
+    struct Outer {
+        error: Inner,
+    }
+    #[derive(serde::Deserialize)]
+    struct Inner {
+        #[serde(rename = "type")]
+        kind: Option<String>,
+        message: Option<String>,
+    }
+    let outer: Outer = serde_json::from_slice(body).ok()?;
+    Some(sibyl_gateway_hub::UpstreamErrorView {
+        kind: outer.error.kind,
+        message: outer.error.message,
+        code: None,
+        param: None,
+    })
+}
+
+async fn with_deadline<T, F>(
+    deadline: Option<Duration>,
+    started: Instant,
+    fut: F,
+) -> Result<T, BridgeError>
+where
+    F: std::future::Future<Output = Result<T, BridgeError>>,
+{
+    match deadline {
+        None => fut.await,
+        Some(d) => match tokio::time::timeout(d, fut).await {
+            Ok(r) => r,
+            Err(_) => Err(BridgeError::Timeout {
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                cause: String::new(),
+            }),
+        },
+    }
+}
+
+/// Build this bridge's outbound `HeaderMap`.
+///
+/// Bridge-owned headers go in FIRST, then the ProviderKey's
+/// `request.default_headers` / `request.forward_client_headers` through the
+/// shared pipeline: a static operator header cannot displace them, and a
+/// forwarded client header displaces only the credential slot it was
+/// explicitly pointed at. Building a map rather than chaining
+/// `RequestBuilder::header` — which APPENDS — is what keeps a slot both
+/// sides name single-valued on the wire.
+fn build_request_headers(
+    api_key_str: &str,
+    api_version: &'static str,
+    request_id: &str,
+    sse: bool,
+    hdr: &sibyl_gateway_hub::UpstreamHeaderContext<'_>,
+) -> Result<reqwest::header::HeaderMap, BridgeError> {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut headers = HeaderMap::new();
+    // Suppressed when the operator forwards the caller's own credential
+    // into this slot: two `x-api-key` values would let the upstream pick.
+    if !sibyl_gateway_hub::ForwardedClientHeaders::resolve(hdr).claims("x-api-key") {
+        let key = HeaderValue::from_str(api_key_str).map_err(|e| {
+            BridgeError::InvalidUpstreamCredentials(format!(
+                "api key contains invalid header chars: {e}"
+            ))
+        })?;
+        headers.insert(HeaderName::from_static("x-api-key"), key);
+    }
+    headers.insert(
+        HeaderName::from_static("anthropic-version"),
+        HeaderValue::from_static(api_version),
+    );
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    let rid = HeaderValue::from_str(request_id).map_err(|e| {
+        BridgeError::Config(format!("request_id contains invalid header chars: {e}"))
+    })?;
+    headers.insert(HeaderName::from_static("x-sibylhub-request-id"), rid);
+    if sse {
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static("text/event-stream"),
+        );
+    }
+    sibyl_gateway_hub::apply_request_headers(&mut headers, hdr);
+    Ok(headers)
+}
+
+#[async_trait]
+impl Bridge for AnthropicBridge {
+    fn name(&self) -> &'static str {
+        "anthropic"
+    }
+
+    fn wire_protocol(&self) -> &'static str {
+        sibyl_gateway_core::Adapter::Anthropic.wire_protocol()
+    }
+
+    async fn chat(
+        &self,
+        req: &ChatFormat,
+        ctx: &BridgeContext,
+    ) -> Result<ChatResponse, BridgeError> {
+        let key = api_key(ctx)?;
+        let upstream = upstream_model(ctx)?;
+
+        let (system, messages) =
+            split_system(req).map_err(|e| BridgeError::InvalidUpstreamConfig(e.to_string()))?;
+        let mut body = build_request(req, upstream, system, messages, false);
+        let synthetic_json_tool = matches!(
+            structured_output_for(req, upstream),
+            StructuredOutput::Tool(_)
+        );
+        maybe_inject_cache_breakpoints(&mut body, ctx);
+        let url = cached_endpoint_url(
+            &ctx.provider_key_id,
+            "anthropic/messages",
+            &[
+                declared_messages_base(ctx),
+                ctx.provider_key.api_base.as_deref().unwrap_or(""),
+                &ctx.provider_key.provider,
+            ],
+            || Ok(format!("{}/v1/messages", resolve_base(ctx)?)),
+        )?;
+        let client = self.client_for(ctx);
+        let api_version = self.api_version;
+        let started = Instant::now();
+        let request_id = ctx.request_id.clone();
+        let headers =
+            build_request_headers(key, api_version, &request_id, false, &ctx.header_ctx())?;
+
+        with_deadline(ctx.deadline, started, async move {
+            let resp = url
+                .post_on(&client)
+                .headers(headers)
+                .json(&body)
+                .send()
+                .await
+                .map_err(sibyl_gateway_hub::send_error)?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(map_http_error(status, resp).await);
+            }
+
+            let parsed: AnthropicResponse = resp
+                .json()
+                .await
+                .map_err(|e| BridgeError::UpstreamDecode(e.to_string()))?;
+            let mut chat = response_into_chat_response(parsed);
+            if synthetic_json_tool {
+                unwrap_json_tool_call(&mut chat);
+            }
+            Ok(chat)
+        })
+        .await
+    }
+
+    async fn chat_stream(
+        &self,
+        req: &ChatFormat,
+        ctx: &BridgeContext,
+    ) -> Result<ChatChunkStream, BridgeError> {
+        let key = api_key(ctx)?;
+        let upstream = upstream_model(ctx)?;
+
+        // The tool path's JSON only exists once the synthetic tool call
+        // has been assembled, so it cannot be streamed as it arrives.
+        // Run the request non-streaming and fake-stream the translated
+        // result: the client sees an ordinary chunk sequence, and usage
+        // rides its own terminal chunk exactly as on a real stream.
+        if matches!(
+            structured_output_for(req, upstream),
+            StructuredOutput::Tool(_)
+        ) {
+            // The leg is not streaming, so it runs under the budget a
+            // non-streaming call would have got — the streaming budget
+            // this context carries bounds a chunk gap, not a completion.
+            let chunks =
+                response_into_fake_stream_chunks(self.chat(req, &ctx.non_streaming_ctx()).await?);
+            return Ok(Box::pin(futures::stream::iter(chunks.into_iter().map(Ok))));
+        }
+
+        let (system, messages) =
+            split_system(req).map_err(|e| BridgeError::InvalidUpstreamConfig(e.to_string()))?;
+        let mut body = build_request(req, upstream, system, messages, true);
+        maybe_inject_cache_breakpoints(&mut body, ctx);
+        let url = cached_endpoint_url(
+            &ctx.provider_key_id,
+            "anthropic/messages",
+            &[
+                declared_messages_base(ctx),
+                ctx.provider_key.api_base.as_deref().unwrap_or(""),
+                &ctx.provider_key.provider,
+            ],
+            || Ok(format!("{}/v1/messages", resolve_base(ctx)?)),
+        )?;
+        let client = self.client_for(ctx);
+        let api_version = self.api_version;
+        let started = Instant::now();
+        let request_id = ctx.request_id.clone();
+        let headers =
+            build_request_headers(key, api_version, &request_id, true, &ctx.header_ctx())?;
+
+        let resp = with_deadline(ctx.deadline, started, async move {
+            url.post_on(&client)
+                .headers(headers)
+                .json(&body)
+                .send()
+                .await
+                .map_err(sibyl_gateway_hub::send_error)
+        })
+        .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_http_error(status, resp).await);
+        }
+
+        let byte_stream = resp.bytes_stream();
+        let stream = build_chunk_stream(byte_stream);
+        Ok(Box::pin(stream))
+    }
+}
+
+fn build_chunk_stream<S>(
+    byte_stream: S,
+) -> impl futures::Stream<Item = Result<ChatChunk, BridgeError>> + Send
+where
+    S: futures::Stream<Item = reqwest::Result<bytes::Bytes>> + Send + 'static,
+{
+    async_stream::try_stream! {
+        let mut decoder = SseDecoder::new();
+        let mut stream = Box::pin(byte_stream);
+        let mut state = StreamState::default();
+
+        while let Some(next) = stream.next().await {
+            let chunk = next.map_err(|e| BridgeError::Transport(sibyl_gateway_hub::transport_error_message(&e)))?;
+            for event in decoder.feed(chunk.as_ref()) {
+                let SseEvent::Data(payload) = event else { continue };
+                let parsed: AnthropicStreamEvent = serde_json::from_str(&payload)
+                    .map_err(|e| BridgeError::UpstreamDecode(e.to_string()))?;
+                if let AnthropicStreamEvent::Error { error } = &parsed {
+                    Err(crate::wire::stream_error_into_bridge_error(error))?;
+                }
+                state.update(&parsed);
+                if let Some(c) = state.to_chunk(&parsed) {
+                    yield c;
+                }
+                if StreamState::is_terminal(&parsed) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sibyl_gateway_core::{Model, ProviderKey};
+    use sibyl_gateway_hub::{ChatMessage, FinishReason, Role};
+    use std::sync::Arc;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn sample_model() -> Arc<Model> {
+        Arc::new(
+            serde_json::from_str(
+                r#"{
+                    "display_name": "my-claude",
+                    "provider": "anthropic",
+                    "model_name": "claude-sonnet-4-5",
+                    "provider_key_id": "11111111-1111-1111-1111-111111111111"
+                }"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn sample_provider_key(base: &str) -> Arc<ProviderKey> {
+        let cfg = format!(
+            r#"{{"display_name":"anthropic-prod","secret":"sk-ant-test","api_base":"{base}"}}"#
+        );
+        Arc::new(serde_json::from_str(&cfg).unwrap())
+    }
+
+    fn sample_ctx(base: &str) -> BridgeContext {
+        BridgeContext::new("req-1", sample_model(), sample_provider_key(base))
+    }
+
+    /// A ctx whose Model has `auto_prompt_caching` set to the given JSON
+    /// (e.g. `{"enabled":true,"ttl":"1h"}` or `{"enabled":false}`).
+    fn caching_ctx(base: &str, apc: serde_json::Value) -> BridgeContext {
+        let model: Model = serde_json::from_value(serde_json::json!({
+            "display_name": "my-claude",
+            "provider": "anthropic",
+            "model_name": "claude-sonnet-4-5",
+            "provider_key_id": "11111111-1111-1111-1111-111111111111",
+            "auto_prompt_caching": apc,
+        }))
+        .unwrap();
+        BridgeContext::new("req-1", Arc::new(model), sample_provider_key(base))
+    }
+
+    /// Capture the single body the bridge POSTed to the mock upstream.
+    async fn captured_body(server: &MockServer) -> serde_json::Value {
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1, "expected exactly one upstream request");
+        serde_json::from_slice(&reqs[0].body).unwrap()
+    }
+
+    /// Mount a minimal non-streaming 200 so `chat` completes.
+    async fn mount_ok_nonstream(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_x", "type": "message", "role": "assistant",
+                "model": "claude-sonnet-4-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1}
+            })))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_small_stream_budget_does_not_cut_the_fake_stream_leg() {
+        // On a streaming dispatch the deadline is the streaming budget,
+        // which bounds a chunk gap rather than a whole completion. The
+        // tool route's upstream leg is not streaming, so it runs under
+        // the end-to-end budget carried beside it.
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(250))
+                    .set_body_json(serde_json::json!({
+                        "id": "msg_json",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-3-5-haiku-20241022",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": "toolu_json",
+                            "name": "json_tool_call",
+                            "input": {"name": "Ada"},
+                        }],
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 9, "output_tokens": 4},
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let model: Model = serde_json::from_value(serde_json::json!({
+            "display_name": "my-claude",
+            "provider": "anthropic",
+            // Older family: takes the tool route, which cannot stream.
+            "model_name": "claude-3-5-haiku-20241022",
+            "provider_key_id": "11111111-1111-1111-1111-111111111111",
+        }))
+        .unwrap();
+        let ctx = BridgeContext::new("req-1", Arc::new(model), sample_provider_key(&server.uri()))
+            .with_deadline(std::time::Duration::from_millis(50))
+            .with_non_streaming_deadline(Some(std::time::Duration::from_secs(30)));
+
+        let mut req = ChatFormat::new("my-claude", vec![ChatMessage::user("who is Ada")]);
+        req.stream = Some(true);
+        req.extra.insert(
+            "response_format".into(),
+            serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "person",
+                    "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    "strict": true,
+                },
+            }),
+        );
+
+        let stream = AnthropicBridge::new()
+            .chat_stream(&req, &ctx)
+            .await
+            .expect("the fake-stream leg must not be cut by the chunk-gap budget");
+        let chunks: Vec<ChatChunk> = futures::StreamExt::collect::<Vec<_>>(stream)
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            chunks[1].delta.content.as_deref(),
+            Some(r#"{"name":"Ada"}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn non_streaming_injects_breakpoints_when_enabled() {
+        let server = MockServer::start().await;
+        mount_ok_nonstream(&server).await;
+        let ctx = caching_ctx(
+            &server.uri(),
+            serde_json::json!({"enabled": true, "ttl": "1h"}),
+        );
+        // req() is system("you are helpful") + user("hi") — no markers.
+        AnthropicBridge::new().chat(&req(), &ctx).await.unwrap();
+
+        let body = captured_body(&server).await;
+        assert_eq!(
+            body["system"],
+            serde_json::json!([
+                {"type": "text", "text": "you are helpful",
+                 "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+            ])
+        );
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(
+            msgs.last().unwrap()["content"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["cache_control"],
+            serde_json::json!({"type": "ephemeral", "ttl": "1h"})
+        );
+    }
+
+    #[tokio::test]
+    async fn non_streaming_does_not_inject_when_disabled() {
+        // Field present but enabled:false must inject nothing — distinct
+        // from the field-absent case sample_ctx covers.
+        let server = MockServer::start().await;
+        mount_ok_nonstream(&server).await;
+        let ctx = caching_ctx(&server.uri(), serde_json::json!({"enabled": false}));
+        AnthropicBridge::new().chat(&req(), &ctx).await.unwrap();
+
+        let body = captured_body(&server).await;
+        // Plain-string system, no markers anywhere.
+        assert_eq!(body["system"], serde_json::json!("you are helpful"));
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_injects_breakpoints_when_enabled() {
+        // The streaming path must inject identically to the
+        // non-streaming path (handler-families lockstep). Capture the
+        // outbound body, not just the streamed chunks.
+        let server = MockServer::start().await;
+        let sse = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"model\":\"claude-sonnet-4-5\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1}}}\n\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+        let ctx = caching_ctx(
+            &server.uri(),
+            serde_json::json!({"enabled": true, "ttl": "1h"}),
+        );
+        let mut stream = AnthropicBridge::new()
+            .chat_stream(&req(), &ctx)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+
+        let body = captured_body(&server).await;
+        assert_eq!(
+            body["system"][0]["cache_control"],
+            serde_json::json!({"type": "ephemeral", "ttl": "1h"})
+        );
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(
+            msgs.last().unwrap()["content"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["cache_control"],
+            serde_json::json!({"type": "ephemeral", "ttl": "1h"})
+        );
+    }
+
+    fn req() -> ChatFormat {
+        ChatFormat::new(
+            "my-claude",
+            vec![
+                ChatMessage::system("you are helpful"),
+                ChatMessage::user("hi"),
+            ],
+        )
+    }
+
+    #[tokio::test]
+    async fn non_streaming_happy_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(header("x-api-key", "sk-ant-test"))
+            .and(header("anthropic-version", "2023-06-01"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_01",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-5",
+                "content": [{"type": "text", "text": "hello back"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 2, "output_tokens": 3}
+            })))
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let resp = bridge.chat(&req(), &ctx).await.unwrap();
+
+        assert_eq!(resp.id, "msg_01");
+        assert_eq!(resp.message.role, Role::Assistant);
+        assert_eq!(resp.message.content_str(), "hello back");
+        assert_eq!(resp.finish_reason, FinishReason::Stop);
+        assert_eq!(resp.usage.prompt_tokens, 2);
+        assert_eq!(resp.usage.completion_tokens, 3);
+        assert_eq!(resp.usage.total_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn non_streaming_400_bad_request_surfaces_message() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(400).set_body_raw(
+                r#"{"error":{"type":"invalid_request","message":"bad"}}"#.as_bytes(),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        match err {
+            BridgeError::UpstreamStatus {
+                status,
+                message,
+                parsed,
+                ..
+            } => {
+                assert_eq!(status, 400);
+                // After #322: bridge parses Anthropic envelope into a
+                // structured view; `message` is now the upstream's
+                // `error.message`, not the raw JSON body.
+                assert_eq!(message, "bad");
+                let parsed = parsed.expect("envelope parsed");
+                assert_eq!(parsed.kind.as_deref(), Some("invalid_request"));
+                assert_eq!(parsed.message.as_deref(), Some("bad"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// Issue #543 (audit MEDIUM): the shared `capture_upstream_error_http`
+    /// no longer gates parsing on Content-Type, so the Anthropic bridge
+    /// must ALSO surface the parsed envelope when the upstream labels a
+    /// JSON error body with a non-`application/json` Content-Type. Guards
+    /// the shared-fn change on the Anthropic side.
+    #[tokio::test]
+    async fn non_streaming_400_non_json_content_type_still_surfaces_message() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(400).set_body_raw(
+                r#"{"error":{"type":"invalid_request","message":"bad"}}"#.as_bytes(),
+                "text/plain",
+            ))
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        match err {
+            BridgeError::UpstreamStatus {
+                status,
+                message,
+                parsed,
+                ..
+            } => {
+                assert_eq!(status, 400);
+                assert_eq!(message, "bad");
+                let parsed = parsed.expect("envelope must parse regardless of Content-Type");
+                assert_eq!(parsed.kind.as_deref(), Some("invalid_request"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn non_streaming_decode_error_on_malformed_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        assert!(matches!(err, BridgeError::UpstreamDecode(_)));
+    }
+
+    #[tokio::test]
+    async fn deadline_elapses_to_timeout_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(5))
+                    .set_body_json(serde_json::json!({
+                        "id": "x",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "x",
+                        "content": []
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri()).with_deadline(Duration::from_millis(50));
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        assert!(matches!(err, BridgeError::Timeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn missing_api_key_is_a_credentials_error() {
+        let mut pk: ProviderKey =
+            serde_json::from_str(r#"{"display_name":"empty","secret":"placeholder"}"#).unwrap();
+        pk.api_key.clear();
+
+        let bridge = AnthropicBridge::new();
+        let ctx = BridgeContext::new("req-1", sample_model(), Arc::new(pk));
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        assert!(matches!(err, BridgeError::InvalidUpstreamCredentials(_)));
+        assert_eq!(err.http_status(), 401);
+        assert_eq!(err.error_type(), "authentication_error");
+    }
+
+    #[tokio::test]
+    async fn secret_with_control_chars_is_credentials_error() {
+        // A non-empty secret that can't be an x-api-key header value
+        // (control bytes) is a customer-fixable credential problem —
+        // a 401 authentication_error, not a 500 (#367 follow-up).
+        let pk: ProviderKey =
+            serde_json::from_str(r#"{"display_name":"bad","secret":"sk-live\n-injected"}"#)
+                .unwrap();
+        let bridge = AnthropicBridge::new();
+        let ctx = BridgeContext::new("req-1", sample_model(), Arc::new(pk));
+        let err = bridge.chat(&req(), &ctx).await.unwrap_err();
+        match &err {
+            BridgeError::InvalidUpstreamCredentials(msg) => {
+                assert!(msg.contains("invalid header characters"), "got {msg}");
+            }
+            other => panic!("expected InvalidUpstreamCredentials, got {other:?}"),
+        }
+        assert_eq!(err.http_status(), 401);
+    }
+
+    #[tokio::test]
+    async fn tool_role_without_tool_call_id_is_rejected_as_config_error() {
+        // Tool role IS supported (translates to Anthropic
+        // `{role:"user", content:[{type:"tool_result", ...}]}`)
+        // when paired with a tool_call_id. Without one, there's no
+        // way to pair the result with its originating tool_use, so
+        // the gateway rejects with Config.
+        let server = MockServer::start().await;
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let req = ChatFormat::new(
+            "my-claude",
+            vec![ChatMessage {
+                role: Role::Tool,
+                content: Some("tool output".into()),
+                content_blocks: None,
+                name: None,
+                tool_call_id: None,
+                extra: serde_json::Map::new(),
+            }],
+        );
+        let err = bridge.chat(&req, &ctx).await.unwrap_err();
+        assert!(matches!(err, BridgeError::InvalidUpstreamConfig(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_happy_path_emits_text_deltas_then_finish() {
+        let server = MockServer::start().await;
+        let sse = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stream\",\"model\":\"claude-sonnet-4-5\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1}}}\n\n\
+event: content_block_start\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n\
+event: content_block_stop\n\
+data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let mut stream = bridge.chat_stream(&req(), &ctx).await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(item) = stream.next().await {
+            chunks.push(item.unwrap());
+        }
+        // Expect: two text deltas, then one message_delta finish chunk.
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].id, "msg_stream");
+        assert_eq!(chunks[0].delta.content.as_deref(), Some("hel"));
+        assert_eq!(chunks[1].delta.content.as_deref(), Some("lo"));
+        assert_eq!(chunks[2].finish_reason, Some(FinishReason::Stop));
+        assert_eq!(chunks[2].usage.as_ref().unwrap().completion_tokens, 5);
+    }
+
+    /// AISIX-Cloud#952: some relay backends omit usage from
+    /// `message_start` and report input/cache counts only on the
+    /// terminal `message_delta`. The bridge must harvest them there
+    /// (pre-fix the final usage carried prompt_tokens=0).
+    #[tokio::test]
+    async fn streaming_harvests_input_tokens_from_message_delta() {
+        let server = MockServer::start().await;
+        let sse = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"gen_952\",\"model\":\"claude-sonnet-4-5\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null}}\n\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":37,\"cache_creation_input_tokens\":4,\"cache_read_input_tokens\":9,\"output_tokens\":5}}\n\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let mut stream = bridge.chat_stream(&req(), &ctx).await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(item) = stream.next().await {
+            chunks.push(item.unwrap());
+        }
+        let usage = chunks
+            .last()
+            .and_then(|c| c.usage.as_ref())
+            .expect("finish chunk must carry usage");
+        assert_eq!(
+            usage.prompt_tokens, 37,
+            "input_tokens reported only on message_delta must be harvested (#952)",
+        );
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.cache_creation_tokens, 4);
+        assert_eq!(usage.cache_read_tokens, 9);
+    }
+
+    #[tokio::test]
+    async fn streaming_upstream_error_surfaces_before_stream_start() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("oops"))
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        match bridge.chat_stream(&req(), &ctx).await {
+            Ok(_) => panic!("expected upstream error"),
+            Err(BridgeError::UpstreamStatus { status: 500, .. }) => {}
+            Err(other) => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// AISIX-Cloud#1222 scenario 3: Anthropic reports mid-stream
+    /// failures as an in-band `event: error` frame inside the 200
+    /// stream. Pre-fix the frame deserialized into the `Other`
+    /// catch-all and was silently swallowed — the truncated stream
+    /// then looked like a clean completion.
+    #[tokio::test]
+    async fn streaming_in_band_error_event_surfaces_as_typed_error() {
+        let server = MockServer::start().await;
+        let sse = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stream\",\"model\":\"claude-sonnet-4-5\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1}}}\n\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n\
+event: error\n\
+data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let bridge = AnthropicBridge::new();
+        let ctx = sample_ctx(&server.uri());
+        let mut stream = bridge.chat_stream(&req(), &ctx).await.unwrap();
+
+        let first = stream.next().await.expect("delta before the error");
+        assert_eq!(first.unwrap().delta.content.as_deref(), Some("hel"));
+        let err = stream
+            .next()
+            .await
+            .expect("error event must surface, not be swallowed")
+            .unwrap_err();
+        match err {
+            BridgeError::UpstreamInBand {
+                status,
+                message,
+                parsed,
+                wire,
+            } => {
+                // 529 is the documented HTTP status for overloaded_error.
+                assert_eq!(status, Some(529));
+                assert_eq!(message, "Overloaded");
+                assert_eq!(
+                    parsed.expect("view").kind.as_deref(),
+                    Some("overloaded_error")
+                );
+                assert!(matches!(wire, sibyl_gateway_hub::UpstreamWire::Anthropic));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(stream.next().await.is_none(), "stream ends after the error");
+    }
+
+    #[test]
+    fn resolve_base_honours_override() {
+        // Default path: ProviderKey has no api_base → falls back to
+        // ANTHROPIC_DEFAULT_BASE.
+        let pk_default: ProviderKey =
+            serde_json::from_str(r#"{"display_name":"x","secret":"k"}"#).unwrap();
+        let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk_default));
+        assert!(!resolve_base(&ctx).unwrap().is_empty());
+
+        // api_base override: trailing slash stripped.
+        let pk_override: ProviderKey = serde_json::from_str(
+            r#"{"display_name":"x","secret":"k","api_base":"https://proxy.example.com/"}"#,
+        )
+        .unwrap();
+        let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk_override));
+        assert_eq!(resolve_base(&ctx).unwrap(), "https://proxy.example.com");
+    }
+
+    fn pk_with_base(api_base: &str) -> ProviderKey {
+        let cfg = format!(r#"{{"display_name":"x","secret":"k","api_base":"{api_base}"}}"#);
+        serde_json::from_str(&cfg).unwrap()
+    }
+
+    /// All four Anthropic api_base forms a real operator might paste must
+    /// collapse to the canonical bare host. The bridge appends
+    /// `/v1/messages` itself at request time.
+    #[test]
+    fn anthropic_api_base_tolerance_bare_host_v1_and_full_messages_path() {
+        let canonical = "https://api.anthropic.com";
+
+        for form in [
+            "https://api.anthropic.com",
+            "https://api.anthropic.com/",
+            "https://api.anthropic.com/v1",
+            "https://api.anthropic.com/v1/",
+            "https://api.anthropic.com/v1/messages",
+            "https://api.anthropic.com/v1/messages/",
+            "  https://api.anthropic.com  ",
+        ] {
+            let pk = pk_with_base(form);
+            let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk));
+            assert_eq!(
+                resolve_base(&ctx).unwrap(),
+                canonical,
+                "form {form:?} should normalize to {canonical}",
+            );
+        }
+    }
+
+    /// Same normalization applies to a custom proxy host — operator pastes
+    /// whichever form their proxy URL takes, all converge to the bare
+    /// host the bridge can append `/v1/messages` to.
+    #[test]
+    fn anthropic_api_base_tolerance_custom_proxy_host() {
+        let canonical = "https://proxy.example.com";
+
+        for form in [
+            "https://proxy.example.com",
+            "https://proxy.example.com/v1",
+            "https://proxy.example.com/v1/messages",
+        ] {
+            let pk = pk_with_base(form);
+            let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk));
+            assert_eq!(resolve_base(&ctx).unwrap(), canonical);
+        }
+    }
+
+    /// Family-bridge safety: when `AnthropicBridge` serves a non-anthropic
+    /// vendor with empty `api_base` it MUST refuse rather than fall back
+    /// to `ANTHROPIC_DEFAULT_BASE` — that fallback would silently route
+    /// the vendor's API key to `api.anthropic.com`. Mirror of the OpenAI
+    /// guard in `crates/sibyl-gateway-provider-openai/src/bridge.rs`.
+    #[test]
+    fn family_bridge_refuses_non_anthropic_vendor_with_empty_api_base() {
+        for vendor in [
+            "bedrock-anthropic",
+            "vertex-anthropic",
+            "BedrockAnthropic",
+            " bedrock-anthropic ",
+        ] {
+            let pk: ProviderKey = serde_json::from_str(&format!(
+                r#"{{"display_name":"x","secret":"k","provider":"{vendor}","adapter":"anthropic"}}"#
+            ))
+            .unwrap();
+            let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk));
+            let err = resolve_base(&ctx).unwrap_err();
+            match err {
+                BridgeError::InvalidUpstreamConfig(msg) => {
+                    assert!(
+                        msg.contains("base URL") && msg.contains(vendor.trim()),
+                        "vendor {vendor:?}: error must name vendor + base URL; got: {msg}",
+                    );
+                    // Sensitive-info-leakage guard: internal product
+                    // taxonomy must not leak into the customer-visible
+                    // 500 body. Those identifiers go to tracing only.
+                    for forbidden in ["cp-api", "adapter_map", "provider_metadata"] {
+                        assert!(
+                            !msg.contains(forbidden),
+                            "vendor {vendor:?}: error body must not leak \
+                             internal-product taxonomy {forbidden:?}; got: {msg}",
+                        );
+                    }
+                }
+                other => {
+                    panic!("vendor {vendor:?}: expected InvalidUpstreamConfig, got {other:?}")
+                }
+            }
+        }
+    }
+
+    /// Pure-anthropic PK without `api_base` falls back to
+    /// `ANTHROPIC_DEFAULT_BASE` — the historical legacy behavior. The
+    /// safety check above only fires for non-anthropic vendors.
+    #[test]
+    fn family_bridge_allows_anthropic_vendor_with_empty_api_base() {
+        let pk: ProviderKey = serde_json::from_str(
+            r#"{"display_name":"a","secret":"sk-a","provider":"anthropic","adapter":"anthropic"}"#,
+        )
+        .unwrap();
+        let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk));
+        assert_eq!(resolve_base(&ctx).unwrap(), ANTHROPIC_DEFAULT_BASE);
+    }
+
+    /// Pre-Phase-A PK carries an empty `provider` string. The safety
+    /// check must NOT fire here — those rows route via the compat
+    /// shim in `crates/sibyl-gateway-proxy/src/dispatch.rs::resolve_bridge`
+    /// to the specialized "anthropic" bridge. The bridge itself must
+    /// tolerate the legacy shape so the compat path doesn't 500.
+    #[test]
+    fn family_bridge_allows_legacy_empty_provider_with_empty_api_base() {
+        let pk: ProviderKey = serde_json::from_str(r#"{"display_name":"x","secret":"k"}"#).unwrap();
+        let ctx = BridgeContext::new("rid", sample_model(), Arc::new(pk));
+        assert_eq!(resolve_base(&ctx).unwrap(), ANTHROPIC_DEFAULT_BASE);
+    }
+}

@@ -1,0 +1,68 @@
+//! sibyl-gateway-hub — the Hub-and-Bridge core.
+//!
+//! This crate holds the provider-agnostic primitives shared by every
+//! `sibyl-gateway-provider-*` crate and by the proxy router:
+//!
+//! - [`chat`] — normalised `ChatFormat`, `ChatMessage`, `ChatResponse`,
+//!   streaming `ChatChunk`, and the usage/finish-reason taxonomy.
+//! - [`bridge`] — the `Bridge` trait every provider implements, plus
+//!   `BridgeContext` and typed `BridgeError` with stable HTTP status
+//!   mapping.
+//! - [`hub`] — a small registry keyed on [`sibyl_gateway_core::models::Provider`]
+//!   that dispatches `ChatFormat` to the right `Bridge`.
+//! - [`sse`] — a provider-agnostic SSE line decoder. Bridges that stream
+//!   over SSE feed it raw bytes and pull typed events back out.
+//! - [`structured_output`] — the `response_format` translation pieces
+//!   every bridge shares: the synthetic JSON tool and its reverse
+//!   translation, the fake stream that carries it, and the two schema
+//!   normalisations.
+//! - [`credential`] — cache keys for credential-derived upstream tokens.
+//! - [`upstream_http`] — connection-layer settings every provider client
+//!   shares (connect timeout, TCP keepalive, pool expiry) plus the
+//!   cause-chain rendering for transport errors.
+//!
+//! Request/response translation lives in the provider crates; this crate
+//! owns only what all of them must agree on.
+
+#![forbid(unsafe_code)]
+#![deny(rust_2018_idioms)]
+
+pub mod bridge;
+pub mod chat;
+pub mod credential;
+pub mod dns_cache;
+pub mod hub;
+pub mod sse;
+pub mod structured_output;
+pub mod upstream_headers;
+pub mod upstream_http;
+pub mod upstream_tls;
+pub mod url_cache;
+
+pub use bridge::{
+    capture_in_band_error, capture_upstream_error_http, content_type_is_json, parse_retry_after,
+    read_body_capped, response_is_json, truncate_lossy, Bridge, BridgeCapability, BridgeContext,
+    BridgeError, ChatChunkStream, UpstreamErrorView, UpstreamWire, MAX_UPSTREAM_ERROR_BODY_BYTES,
+    MAX_UPSTREAM_ERROR_MESSAGE_BYTES,
+};
+pub use chat::{
+    ChatChunk, ChatDelta, ChatFormat, ChatMessage, ChatResponse, EmbeddingObject, EmbeddingRequest,
+    EmbeddingResponse, EmbeddingUsage, EmbeddingVector, FinishReason, Role, UsageStats,
+};
+pub use credential::credential_fingerprint;
+pub use hub::{upstream_protocol, Hub, UPSTREAM_PROTOCOL_UNKNOWN};
+pub use sse::{SseDecoder, SseEvent};
+pub use structured_output::{
+    apply_schema_limits, close_object_schemas, json_schema_from_response_format,
+    response_into_fake_stream_chunks, seal_object_schemas, unwrap_json_tool_call, SchemaLimits,
+    ANTHROPIC_SCHEMA_LIMITS, GEMINI_OPENAPI_SCHEMA_LIMITS, JSON_TOOL_DESCRIPTION, JSON_TOOL_NAME,
+};
+pub use upstream_headers::{
+    apply_request_headers, client_header_forwardable, header_forward_blocked,
+    resolve_default_headers, resolve_extra_headers, CallerIdentity, ForwardedClientHeaders,
+    UpstreamHeaderContext,
+};
+pub use upstream_http::{
+    client_builder, error_with_causes, send_error, transport_error_message, UpstreamHttpConfig,
+};
+pub use upstream_tls::TlsSettings;

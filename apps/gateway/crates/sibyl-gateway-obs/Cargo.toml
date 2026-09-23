@@ -1,0 +1,54 @@
+[package]
+name = "sibyl-gateway-obs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway: observability (tracing, metrics, access log, OTLP export)"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+# For `client_builder()`: exporter HTTP clients share the process-wide
+# connection settings like every other outbound call.
+sibyl-gateway-hub = { path = "../sibyl-gateway-gateway" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+metrics-util.workspace = true
+crossbeam-queue.workspace = true
+quanta.workspace = true
+bytes.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+parking_lot.workspace = true
+# Object-storage sink (S3/GCS/Azure behind one `ObjectStore` trait). `chrono`
+# renders the date-partitioned object key; `flate2` gzips NDJSON before upload.
+object_store.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+sha2.workspace = true
+hex.workspace = true
+# Aliyun SLS sink — official protobuf + signature sub-crates (pure-Rust),
+# lz4 block compression, and `http` types for sign_v1. Transport is reqwest
+# (rustls), so no native-tls / OpenSSL is pulled in.
+http.workspace = true
+aliyun-log-sdk-protobuf.workspace = true
+aliyun-log-sdk-sign.workspace = true
+lz4_flex.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+futures.workspace = true
+# `test-util` plays the delivery retry ladder out on a paused clock: the
+# budget is minutes of wall time and the cases assert where each attempt
+# lands in it.
+tokio = { workspace = true, features = ["test-util"] }

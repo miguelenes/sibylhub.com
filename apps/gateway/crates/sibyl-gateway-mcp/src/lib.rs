@@ -1,0 +1,31 @@
+//! sibyl-gateway-mcp — the MCP gateway data-plane crate.
+//!
+//! First step (DP-2): a governed client tunnel to a single upstream MCP server
+//! over Streamable HTTP, exposed through the [`McpBridge`] trait. Later steps
+//! aggregate many upstreams behind the downstream-facing `/mcp` endpoint and
+//! route MCP tool traffic through the same auth / ACL / guardrail / quota
+//! pipeline as LLM traffic.
+//!
+//! The official `rmcp` SDK does the JSON-RPC + Streamable HTTP plumbing; this
+//! crate keeps every rmcp type behind [`McpBridge`] so the SDK's still-moving
+//! API stays contained here.
+
+#![forbid(unsafe_code)]
+#![deny(rust_2018_idioms)]
+
+pub mod bridge;
+pub mod error;
+pub mod gateway;
+mod oauth;
+pub mod openapi;
+
+pub use bridge::{
+    forwarded_client_headers, upstream_from_mcp_server, EphemeralBridge, McpAuth, McpBridge,
+    McpProtocol, McpTool, McpToolResult, McpUpstream, OAuthClientConfig, RmcpBridge,
+};
+pub use error::McpError;
+pub use gateway::{
+    streamable_http_service, strip_server_prefix, McpGateway, ToolAcl, ToolsListCounts,
+    SUPPORTED_PROTOCOL_VERSION_NAMES, TOOL_NAMESPACE_SEPARATOR,
+};
+pub use openapi::{validate_spec, OpenApiBridge};

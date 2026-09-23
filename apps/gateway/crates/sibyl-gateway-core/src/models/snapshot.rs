@@ -1,0 +1,180 @@
+//! The concrete snapshot shape for sibyl-gateway — one table per entity kind.
+//!
+//! The etcd watch supervisor builds a fresh [`GatewaySnapshot`] on every
+//! coherent rebuild (compaction, initial load) and atomically swaps it into
+//! a [`SnapshotHandle<GatewaySnapshot>`]. The data plane only sees the handle.
+
+use super::a2a_agent::A2aAgent;
+use super::apikey::ApiKey;
+use super::cache_policy::CachePolicy;
+use super::claim_mapping::ClaimMapping;
+use super::guardrail::{Guardrail, GuardrailAttachment};
+use super::mcp_auth_settings::McpAuthSettings;
+use super::mcp_policy::McpPolicy;
+use super::mcp_server::McpServer;
+use super::model::Model;
+use super::observability_exporter::ObservabilityExporter;
+use super::oidc_provider::OidcProvider;
+use super::passthrough_route::PassthroughRoute;
+use super::pricing::Pricing;
+use super::provider_key::ProviderKey;
+use super::rate_limit_policy::RateLimitPolicy;
+use crate::snapshot::ResourceTable;
+
+/// Composite of every typed [`ResourceTable`] the gateway reads on the hot
+/// path. Cheap to construct empty; populated by the loader.
+#[derive(Debug, Default, Clone)]
+pub struct GatewaySnapshot {
+    pub models: ResourceTable<Model>,
+    pub apikeys: ResourceTable<ApiKey>,
+    pub provider_keys: ResourceTable<ProviderKey>,
+    pub guardrails: ResourceTable<Guardrail>,
+    /// Attachment rows: `/sibyl-gateway/<env>/guardrail_attachments/<uuid>`.
+    /// Each row binds a guardrail definition to a scope (env / model /
+    /// mcp_server / api_key / team). `GuardrailIndex::build_from_snapshot` consumes
+    /// both this table and `guardrails` to build the per-request resolver.
+    pub guardrail_attachments: ResourceTable<GuardrailAttachment>,
+    /// Per-env cache policies. Stage 2 honors only the existence of an
+    /// enabled row to gate the cache; Stage 3 will parse `applies_to`
+    /// + per-policy `ttl_seconds`. See `sibyl-gateway-core::CachePolicy`.
+    pub cache_policies: ResourceTable<CachePolicy>,
+    /// Per-env observability exporters. Each enabled row receives a
+    /// fan-out POST per chat completion (see `sibyl-gateway-obs::OtlpHttpFanOut`).
+    pub observability_exporters: ResourceTable<ObservabilityExporter>,
+    pub rate_limit_policies: ResourceTable<RateLimitPolicy>,
+    /// Registered upstream MCP servers: `/sibyl-gateway/<env>/mcp_servers/<uuid>`. The
+    /// MCP gateway endpoint aggregates each enabled server's tools and routes
+    /// tool calls back to the owning server.
+    pub mcp_servers: ResourceTable<McpServer>,
+    /// MCP access policies: `/sibyl-gateway/<env>/mcp_policies/<uuid>`. Environment-
+    /// default and team-scoped rows the MCP gateway endpoint combines with
+    /// each caller key's `mcp_access` block into the per-request tool ACL.
+    pub mcp_policies: ResourceTable<McpPolicy>,
+    /// Registered upstream A2A agents: `/sibyl-gateway/<env>/a2a_agents/<uuid>`. The
+    /// A2A gateway endpoint fronts each enabled agent, forwarding JSON-RPC
+    /// requests to it and serving its card with URLs rewritten to the gateway.
+    pub a2a_agents: ResourceTable<A2aAgent>,
+    /// Trusted external identity providers for inbound JWT authentication:
+    /// `/sibyl-gateway/<env>/oidc_providers/<uuid>`. The proxy auth path matches a
+    /// JWT bearer's `iss` against these rows and, on success, binds the
+    /// request to the API key whose `jwt_subject` equals the token's
+    /// identity claim.
+    pub oidc_providers: ResourceTable<OidcProvider>,
+    /// Claim-mapping rules: `/sibyl-gateway/<env>/claim_mappings/<uuid>`. When a
+    /// verified JWT's subject binds to no API key directly, the enabled
+    /// rules for the matched trust provider are evaluated in priority
+    /// order and the first match selects the key the request runs as.
+    pub claim_mappings: ResourceTable<ClaimMapping>,
+    /// Explicit passthrough bindings: `/sibyl-gateway/<env>/passthrough_routes/<uuid>`.
+    /// Each row maps a gateway entry (path prefix and/or inbound `Host`) to
+    /// one upstream target with its own auth and credential handling; the
+    /// proxy matches them after the typed routes (path) or before them
+    /// (foreign `Host`).
+    pub passthrough_routes: ResourceTable<PassthroughRoute>,
+    /// The environment's inbound MCP OAuth discovery identity:
+    /// `/sibyl-gateway/<env>/mcp_auth_settings/<env-uuid>` — a singleton row
+    /// (cp-api keys it by the environment id). Together with at least
+    /// one enabled `oidc_providers` row it activates the `/mcp`
+    /// RFC 9728 discovery surface (AISIX-Cloud#1143).
+    pub mcp_auth_settings: ResourceTable<McpAuthSettings>,
+    /// The environment's own pricing documents:
+    /// `/sibyl-gateway/<env>/pricing/<uuid>`. Indexed by `key`, and consulted
+    /// before [`GatewaySnapshot::global_pricing`] so an organization can
+    /// override a catalog price.
+    pub pricing: ResourceTable<Pricing>,
+    /// The shared pricing catalog: `/sibyl-gateway/global/pricing/<uuid>` — the
+    /// one collection the gateway reads from outside its own environment
+    /// prefix, and the only kind accepted there.
+    pub global_pricing: ResourceTable<Pricing>,
+}
+
+impl GatewaySnapshot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Convenience: total entry count across all tables. Handy for debug /
+    /// readiness checks.
+    pub fn total_entries(&self) -> usize {
+        self.models.len()
+            + self.apikeys.len()
+            + self.provider_keys.len()
+            + self.guardrails.len()
+            + self.guardrail_attachments.len()
+            + self.cache_policies.len()
+            + self.observability_exporters.len()
+            + self.rate_limit_policies.len()
+            + self.mcp_servers.len()
+            + self.mcp_policies.len()
+            + self.a2a_agents.len()
+            + self.oidc_providers.len()
+            + self.claim_mappings.len()
+            + self.passthrough_routes.len()
+            + self.mcp_auth_settings.len()
+            + self.pricing.len()
+            + self.global_pricing.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::ResourceEntry;
+
+    fn sample_model() -> Model {
+        serde_json::from_str(
+            r#"{
+              "display_name": "my-gpt4",
+              "provider": "openai",
+              "model_name": "gpt-4o",
+              "provider_key_id": "11111111-1111-1111-1111-111111111111"
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn sample_apikey() -> ApiKey {
+        serde_json::from_str(r#"{"key_hash": "91ed2dbc407561556f3e7be98ba0bd2a57986d6a868c482d867d19c6d40d201c", "allowed_models": ["my-gpt4"]}"#)
+            .unwrap()
+    }
+
+    fn sample_provider_key() -> ProviderKey {
+        serde_json::from_str(r#"{"display_name":"openai-prod","secret":"sk-prod"}"#).unwrap()
+    }
+
+    #[test]
+    fn empty_snapshot_has_no_entries() {
+        let s = GatewaySnapshot::new();
+        assert_eq!(s.total_entries(), 0);
+        assert!(s.models.is_empty());
+        assert!(s.apikeys.is_empty());
+        assert!(s.provider_keys.is_empty());
+    }
+
+    #[test]
+    fn all_three_tables_are_independent() {
+        let s = GatewaySnapshot::new();
+        s.models
+            .insert(ResourceEntry::new("m-1", sample_model(), 1));
+        s.apikeys
+            .insert(ResourceEntry::new("k-1", sample_apikey(), 1));
+        s.provider_keys
+            .insert(ResourceEntry::new("pk-1", sample_provider_key(), 1));
+
+        assert_eq!(s.total_entries(), 3);
+        assert_eq!(s.models.get_by_name("my-gpt4").unwrap().id, "m-1");
+        assert_eq!(
+            // Snapshot's by_name index for ApiKey is keyed by key_hash
+            // (§9A.7B.4) — the SHA-256 of the bearer plaintext.
+            s.apikeys
+                .get_by_name("91ed2dbc407561556f3e7be98ba0bd2a57986d6a868c482d867d19c6d40d201c")
+                .unwrap()
+                .id,
+            "k-1",
+        );
+        assert_eq!(
+            s.provider_keys.get_by_name("openai-prod").unwrap().id,
+            "pk-1",
+        );
+    }
+}

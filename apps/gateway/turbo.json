@@ -1,0 +1,46 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "crates/**",
+        "schemas/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "rustfmt.toml"
+      ],
+      "outputs": ["target/release/sibyl-gateway"]
+    },
+    "typecheck": {
+      "inputs": [
+        "crates/**",
+        "schemas/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "crates/**",
+        "schemas/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "crates/**",
+        "schemas/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml"
+      ]
+    },
+    "test:e2e": { "cache": false },
+    "test:mcp-conformance": { "cache": false }
+  }
+}

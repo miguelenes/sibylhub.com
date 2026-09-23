@@ -1,0 +1,557 @@
+import { createHash } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+  EtcdClient,
+  SeedClient,
+  spawnApp,
+  startOpenAiUpstream,
+  waitConfigPropagation,
+  type OpenAiUpstream,
+  type SpawnedApp,
+} from "../harness/index.js";
+
+// AISIX-Cloud#1011: TTFT and end-to-end request latency must be exposed
+// as REAL Prometheus histograms — `_bucket{le=…}` series that
+// `histogram_quantile()` can aggregate across DP instances — with a
+// dedicated low-cardinality label set (env_id / endpoint / model /
+// provider / status_class / streaming). The pre-existing duration series
+// render as summaries (client-side quantiles), which cannot be
+// re-aggregated; they stay untouched.
+//
+// Drives a real `sibyl-gateway` + etcd + mock upstream through non-streaming,
+// streaming, and failing chat requests plus a /v1/messages request, then
+// scrapes the dedicated metrics listener. Exactly-once accounting is
+// pinned via _count (a double-observation or dropped-observation
+// regression shifts the count off 1).
+
+const CALLER_PLAINTEXT = "sk-latency-histo-caller";
+const CALLER_KEY_HASH = createHash("sha256").update(CALLER_PLAINTEXT).digest("hex");
+
+const E2E_SERIES = "sibyl_gateway_request_e2e_latency_seconds";
+const TTFT_SERIES = "sibyl_gateway_request_ttft_seconds";
+const DETAILED_TTFT_SERIES = "sibyl_gateway_llm_time_to_first_token_seconds";
+
+const RESPONSES_NATIVE_MODEL = "histo-responses-native";
+const RESPONSES_BRIDGE_MODEL = "histo-responses-bridge";
+
+describe("latency histograms e2e: bucketed TTFT + e2e latency (#1011)", () => {
+  let app: SpawnedApp | undefined;
+  let upstream: OpenAiUpstream | undefined;
+  let streamUpstream: OpenAiUpstream | undefined;
+  let responsesNativeUpstream: OpenAiUpstream | undefined;
+  let responsesBridgeUpstream: OpenAiUpstream | undefined;
+  let failUpstream: OpenAiUpstream | undefined;
+  let seed: SeedClient | undefined;
+  let etcdReachable = false;
+
+  beforeAll(async () => {
+    const etcd = new EtcdClient();
+    etcdReachable = await etcd.ping();
+    if (!etcdReachable) return;
+
+    upstream = await startOpenAiUpstream({
+      nonStreamBody: {
+        id: "cmpl-histo",
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: "gpt-4o-mini",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "quick reply" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+      },
+    });
+    // The mock serves SSE whenever streamEvents is set, so streaming
+    // traffic gets its own upstream + model.
+    streamUpstream = await startOpenAiUpstream({
+      streamEvents: [
+        '{"id":"strm-histo","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+        '{"id":"strm-histo","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":"streamed text"},"finish_reason":null}]}',
+        '{"id":"strm-histo","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        "[DONE]",
+      ],
+      eventDelayMs: 20,
+    });
+    responsesNativeUpstream = await startOpenAiUpstream({
+      streamEvents: [
+        JSON.stringify({
+          type: "response.created",
+          response: { id: "resp-histo-native", model: "gpt-4o-mini" },
+        }),
+        JSON.stringify({ type: "response.output_text.delta", delta: "native reply" }),
+        JSON.stringify({
+          type: "response.completed",
+          response: {
+            id: "resp-histo-native",
+            status: "completed",
+            model: "gpt-4o-mini",
+            usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+          },
+        }),
+        "[DONE]",
+      ],
+      firstEventDelayMs: 25,
+    });
+    responsesBridgeUpstream = await startOpenAiUpstream({
+      streamEvents: [
+        JSON.stringify({
+          id: "chatcmpl-histo-bridge",
+          object: "chat.completion.chunk",
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+        }),
+        JSON.stringify({
+          id: "chatcmpl-histo-bridge",
+          object: "chat.completion.chunk",
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: { content: "bridged reply" }, finish_reason: null }],
+        }),
+        JSON.stringify({
+          id: "chatcmpl-histo-bridge",
+          object: "chat.completion.chunk",
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 11, completion_tokens: 5, total_tokens: 16 },
+        }),
+        "[DONE]",
+      ],
+      firstEventDelayMs: 25,
+    });
+    failUpstream = await startOpenAiUpstream({
+      status: 500,
+      errorBody: { error: { message: "mock outage", type: "server_error" } },
+    });
+
+    app = await spawnApp();
+    seed = new SeedClient(etcd, app.etcdPrefix);
+
+    const pk = await seed.createProviderKey({
+      display_name: "histo-pk",
+      secret: "sk-mock",
+      api_base: `${upstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: "histo-model",
+      provider: "openai",
+      model_name: "gpt-4o-mini",
+      provider_key_id: pk.id,
+    });
+    const streamPk = await seed.createProviderKey({
+      display_name: "histo-stream-pk",
+      secret: "sk-mock",
+      api_base: `${streamUpstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: "histo-stream-model",
+      provider: "openai",
+      model_name: "gpt-4o-mini",
+      provider_key_id: streamPk.id,
+    });
+    const responsesNativePk = await seed.createProviderKey({
+      display_name: "histo-responses-native-pk",
+      secret: "sk-mock",
+      api_base: `${responsesNativeUpstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: RESPONSES_NATIVE_MODEL,
+      provider: "openai",
+      model_name: "gpt-4o-mini",
+      provider_key_id: responsesNativePk.id,
+    });
+    const responsesBridgePk = await seed.createProviderKey({
+      display_name: "histo-responses-bridge-pk",
+      provider: "deepseek",
+      adapter: "openai",
+      secret: "sk-mock",
+      api_base: `${responsesBridgeUpstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: RESPONSES_BRIDGE_MODEL,
+      provider: "deepseek",
+      model_name: "deepseek-chat",
+      provider_key_id: responsesBridgePk.id,
+    });
+    const failPk = await seed.createProviderKey({
+      display_name: "histo-fail-pk",
+      secret: "sk-mock",
+      api_base: `${failUpstream.baseUrl}/v1`,
+    });
+    await seed.createModel({
+      display_name: "histo-fail-model",
+      provider: "openai",
+      model_name: "gpt-4o-mini",
+      provider_key_id: failPk.id,
+    });
+    await seed.createApiKey({
+      key_hash: CALLER_KEY_HASH,
+      allowed_models: [
+        "histo-model",
+        "histo-stream-model",
+        "histo-fail-model",
+        RESPONSES_NATIVE_MODEL,
+        RESPONSES_BRIDGE_MODEL,
+      ],
+    });
+
+    await waitConfigPropagation(async () => {
+      const r = await chat("histo-model", false);
+      return r.status === 200;
+    });
+  });
+
+  afterAll(async () => {
+    await app?.exit();
+    await upstream?.close();
+    await streamUpstream?.close();
+    await responsesNativeUpstream?.close();
+    await responsesBridgeUpstream?.close();
+    await failUpstream?.close();
+  });
+
+  async function chat(model: string, stream: boolean): Promise<Response> {
+    const res = await fetch(`${app!.proxyUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${CALLER_PLAINTEXT}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "hello" }],
+        ...(stream ? { stream: true } : {}),
+      }),
+    });
+    await res.text();
+    return res;
+  }
+
+  async function scrape(): Promise<string> {
+    const res = await fetch(`${app!.metricsUrl}/metrics`);
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  async function appliedConfig(): Promise<
+    | { applySeq: number; resourceCounts: Record<string, number> }
+    | undefined
+  > {
+    const res = await fetch(`${app!.metricsUrl}/status/config`);
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as {
+      applied?: { apply_seq?: number; resource_counts?: Record<string, number> };
+    };
+    if (typeof body.applied?.apply_seq !== "number") return undefined;
+    return {
+      applySeq: body.applied.apply_seq,
+      resourceCounts: body.applied.resource_counts ?? {},
+    };
+  }
+
+  async function responses(model: string): Promise<Response> {
+    const res = await fetch(`${app!.proxyUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${CALLER_PLAINTEXT}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model, input: "hello", stream: true }),
+    });
+    await res.text();
+    return res;
+  }
+
+  /** Lines of `series` matching every given label pair. */
+  function bucketLines(body: string, series: string, labels: Record<string, string>): string[] {
+    return body.split("\n").filter(
+      (l) =>
+        l.startsWith(`${series}_bucket{`) &&
+        Object.entries(labels).every(([k, v]) => l.includes(`${k}="${v}"`)),
+    );
+  }
+
+  /** Sum of `series`_count across label combinations matching `labels`. */
+  function countOf(body: string, series: string, labels: Record<string, string>): number {
+    return body
+      .split("\n")
+      .filter(
+        (l) =>
+          l.startsWith(`${series}_count{`) &&
+          Object.entries(labels).every(([k, v]) => l.includes(`${k}="${v}"`)),
+      )
+      .map((l) => parseInt(l.split("}").at(-1)!.trim(), 10))
+      .reduce((a, b) => a + b, 0);
+  }
+
+  /** Sum of `series`_sum across label combinations matching `labels`. */
+  function sumOf(body: string, series: string, labels: Record<string, string>): number {
+    return body
+      .split("\n")
+      .filter(
+        (l) =>
+          l.startsWith(`${series}_sum{`) &&
+          Object.entries(labels).every(([k, v]) => l.includes(`${k}="${v}"`)),
+      )
+      .map((l) => Number(l.split("}").at(-1)!.trim()))
+      .filter((v) => !Number.isNaN(v))
+      .reduce((a, b) => a + b, 0);
+  }
+
+  test("non-streaming, streaming and failed requests land in le-bucketed series", async (ctx) => {
+    if (!etcdReachable || !app) {
+      ctx.skip();
+      return;
+    }
+    expect((await chat("histo-model", false)).status).toBe(200);
+    expect((await chat("histo-stream-model", true)).status).toBe(200);
+    expect((await chat("histo-fail-model", false)).status).toBeGreaterThanOrEqual(500);
+    // One /v1/messages request so the anthropic-protocol wiring is covered.
+    const msg = await fetch(`${app!.proxyUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": CALLER_PLAINTEXT,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "histo-model",
+        max_tokens: 16,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    await msg.text();
+    expect(msg.status).toBe(200);
+
+    // Streaming observation happens at stream completion; poll the scrape.
+    let body = "";
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      body = await scrape();
+      const haveAll =
+        bucketLines(body, E2E_SERIES, { streaming: "false", status_class: "2xx" }).length > 0 &&
+        bucketLines(body, E2E_SERIES, { streaming: "true", status_class: "2xx" }).length > 0 &&
+        bucketLines(body, E2E_SERIES, { status_class: "5xx" }).length > 0 &&
+        bucketLines(body, TTFT_SERIES, { streaming: "true" }).length > 0;
+      if (haveAll || Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // Real histogram exposition for all three request shapes + TTFT.
+    const nonStream = bucketLines(body, E2E_SERIES, {
+      streaming: "false",
+      status_class: "2xx",
+      model: "histo-model",
+      endpoint: "/v1/chat/completions",
+      provider: "openai",
+    });
+    expect(nonStream.length, `non-streaming buckets in:\n${body}`).toBeGreaterThan(0);
+    expect(nonStream.some((l) => l.includes('le="+Inf"'))).toBe(true);
+
+    const streamed = bucketLines(body, E2E_SERIES, {
+      streaming: "true",
+      status_class: "2xx",
+      model: "histo-stream-model",
+    });
+    expect(streamed.length, "streaming e2e buckets").toBeGreaterThan(0);
+
+    const failed = bucketLines(body, E2E_SERIES, {
+      status_class: "5xx",
+      model: "histo-fail-model",
+    });
+    expect(failed.length, "failed-request buckets").toBeGreaterThan(0);
+
+    const ttft = bucketLines(body, TTFT_SERIES, {
+      streaming: "true",
+      model: "histo-stream-model",
+    });
+    expect(ttft.length, "TTFT buckets").toBeGreaterThan(0);
+
+    const messagesSeries = bucketLines(body, E2E_SERIES, {
+      endpoint: "/v1/messages",
+      model: "histo-model",
+    });
+    expect(messagesSeries.length, "/v1/messages buckets").toBeGreaterThan(0);
+
+    // Exactly-once accounting: this suite sent exactly ONE streaming chat
+    // to histo-stream-model — a double observation (e.g. handler-return
+    // AND stream-completion both recording) or a dropped one shifts this
+    // off 1. Same for its single TTFT.
+    expect(countOf(body, E2E_SERIES, { model: "histo-stream-model" })).toBe(1);
+    expect(countOf(body, TTFT_SERIES, { model: "histo-stream-model" })).toBe(1);
+    expect(countOf(body, E2E_SERIES, { model: "histo-fail-model" })).toBe(1);
+
+    // histogram_quantile() needs _sum/_count too.
+    expect(body).toContain(`${E2E_SERIES}_sum`);
+    expect(body).toContain(`${E2E_SERIES}_count`);
+    expect(body).toContain(`${TTFT_SERIES}_sum`);
+
+    // env_id label present on every series line (standalone DP → unknown).
+    for (const l of [...nonStream, ...streamed, ...failed, ...ttft]) {
+      expect(l).toContain('env_id="');
+    }
+  });
+
+  test("the SLO series carry no per-key/per-user labels; legacy series stay summaries", async (ctx) => {
+    if (!etcdReachable || !app) {
+      ctx.skip();
+      return;
+    }
+    const body = await scrape();
+    for (const line of body.split("\n")) {
+      if (!line.startsWith(E2E_SERIES) && !line.startsWith(TTFT_SERIES)) continue;
+      for (const highCard of ["api_key_id", "user_id", "team_id", "provider_key_id", "user_name"]) {
+        expect(line, `no ${highCard} on SLO series`).not.toContain(`${highCard}="`);
+      }
+    }
+    // The pre-existing duration series keep their summary exposition —
+    // adding buckets to them would multiply their high-cardinality labels.
+    expect(body).not.toContain("sibyl_gateway_llm_request_duration_seconds_bucket");
+    expect(body).not.toContain("sibyl_gateway_proxy_request_duration_seconds_bucket");
+    expect(body).toContain("sibyl_gateway_llm_request_duration_seconds");
+  });
+
+  test("native and bridged Responses streams record both TTFT families exactly once", async (ctx) => {
+    if (!etcdReachable || !app) {
+      ctx.skip();
+      return;
+    }
+    const before = await scrape();
+    expect((await responses(RESPONSES_NATIVE_MODEL)).status).toBe(200);
+    expect((await responses(RESPONSES_BRIDGE_MODEL)).status).toBe(200);
+
+    let body = "";
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      body = await scrape();
+      const complete = [RESPONSES_NATIVE_MODEL, RESPONSES_BRIDGE_MODEL].every(
+        (model) =>
+          countOf(body, TTFT_SERIES, {
+            endpoint: "/v1/responses",
+            model,
+          }) === 1 &&
+          countOf(body, DETAILED_TTFT_SERIES, {
+            endpoint: "/v1/responses",
+            model,
+          }) === 1,
+      );
+      if (complete || Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    for (const [model, provider] of [
+      [RESPONSES_NATIVE_MODEL, "openai"],
+      [RESPONSES_BRIDGE_MODEL, "deepseek"],
+    ] as const) {
+      const lowCardLabels = {
+        endpoint: "/v1/responses",
+        model,
+        provider,
+        streaming: "true",
+        status_class: "2xx",
+      };
+      expect(
+        bucketLines(body, TTFT_SERIES, lowCardLabels).length,
+        `${model} low-cardinality TTFT buckets`,
+      ).toBeGreaterThan(0);
+      expect(countOf(body, TTFT_SERIES, lowCardLabels)).toBe(1);
+      expect(
+        sumOf(body, TTFT_SERIES, lowCardLabels) -
+          sumOf(before, TTFT_SERIES, lowCardLabels),
+      ).toBeGreaterThan(0);
+
+      const detailedLabels = {
+        endpoint: "/v1/responses",
+        model,
+        provider,
+        inbound_protocol: "openai",
+        upstream_protocol: "openai",
+      };
+      expect(countOf(body, DETAILED_TTFT_SERIES, detailedLabels)).toBe(1);
+      expect(
+        sumOf(body, DETAILED_TTFT_SERIES, detailedLabels) -
+          sumOf(before, DETAILED_TTFT_SERIES, detailedLabels),
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  test("buffered Responses output-guardrail paths retain TTFT on allow and block", async (ctx) => {
+    if (!etcdReachable || !app || !seed) {
+      ctx.skip();
+      return;
+    }
+    const guardrailBody = (pattern: string) => ({
+      name: "histo-responses-output",
+      enabled: true,
+      hook_point: "output",
+      kind: "keyword",
+      patterns: [{ kind: "literal", value: pattern }],
+    });
+    const beforeCreate = await appliedConfig();
+    expect(beforeCreate).toBeDefined();
+    const guardrail = await seed.createGuardrail(guardrailBody("native reply"));
+
+    await waitConfigPropagation(async () => {
+      const applied = await appliedConfig();
+      return (
+        applied !== undefined &&
+        applied.applySeq > beforeCreate!.applySeq &&
+        applied.resourceCounts.guardrails === 1 &&
+        applied.resourceCounts.guardrail_attachments === 1
+      );
+    });
+
+    const assertDelta = async (status: number, statusClass: "2xx" | "4xx") => {
+      const before = await scrape();
+      expect((await responses(RESPONSES_NATIVE_MODEL)).status).toBe(status);
+      const after = await scrape();
+      const lowCardLabels = {
+        endpoint: "/v1/responses",
+        model: RESPONSES_NATIVE_MODEL,
+        provider: "openai",
+        streaming: "true",
+        status_class: statusClass,
+      };
+      const detailedLabels = {
+        endpoint: "/v1/responses",
+        model: RESPONSES_NATIVE_MODEL,
+        provider: "openai",
+        inbound_protocol: "openai",
+        upstream_protocol: "openai",
+      };
+      expect(
+        countOf(after, TTFT_SERIES, lowCardLabels) -
+          countOf(before, TTFT_SERIES, lowCardLabels),
+      ).toBe(1);
+      expect(
+        sumOf(after, TTFT_SERIES, lowCardLabels) -
+          sumOf(before, TTFT_SERIES, lowCardLabels),
+      ).toBeGreaterThan(0);
+      expect(
+        countOf(after, DETAILED_TTFT_SERIES, detailedLabels) -
+          countOf(before, DETAILED_TTFT_SERIES, detailedLabels),
+      ).toBe(1);
+      expect(
+        sumOf(after, DETAILED_TTFT_SERIES, detailedLabels) -
+          sumOf(before, DETAILED_TTFT_SERIES, detailedLabels),
+      ).toBeGreaterThan(0);
+    };
+
+    await assertDelta(422, "4xx");
+
+    const beforeUpdate = await appliedConfig();
+    expect(beforeUpdate).toBeDefined();
+    await seed.update(
+      "guardrails",
+      guardrail.id as string,
+      guardrailBody("never-matches-native-response"),
+    );
+    await waitConfigPropagation(async () => {
+      const applied = await appliedConfig();
+      return applied !== undefined && applied.applySeq > beforeUpdate!.applySeq;
+    });
+    await assertDelta(200, "2xx");
+  });
+});
