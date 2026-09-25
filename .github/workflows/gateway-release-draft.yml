@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out the release-notes header template
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Create draft release with header + generated notes
         env:

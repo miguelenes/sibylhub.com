@@ -27,7 +27,7 @@ jobs:
     name: lint (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -44,7 +44,7 @@ jobs:
     name: schema drift (resources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./apps/gateway/.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@v2
@@ -74,7 +74,7 @@ jobs:
     name: generate admin openapi
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./apps/gateway/.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@v2
@@ -204,7 +204,7 @@ jobs:
       ETCD_AUTH_TTL_TEST_PASSWORD: sibyl-gateway-ci-etcd
       ETCD_AUTH_TTL_TEST_SECS: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -342,7 +342,7 @@ jobs:
       LLVM_PROFILE_FILE: "coverage/sibyl-gateway-%p-%m.profraw"
       SIBYL_GATEWAY_BUILD_VERSION: 0.0.0-ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -430,13 +430,13 @@ jobs:
         image: redis:7-alpine
         ports: ["6377:6379"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: sibyl-gateway-bin
           path: apps/gateway/target/debug
       - run: chmod +x target/debug/sibyl-gateway
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           # pnpm 11 requires Node 22.13 or newer — it imports `node:sqlite`
           # for its store index. The job only passes on Node 20 because it
@@ -558,13 +558,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./apps/gateway/.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: build the conformance target
@@ -577,7 +577,7 @@ jobs:
     needs: [rust-unit, e2e]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with: { name: coverage-unit, path: apps/gateway/cov/unit }
       - uses: actions/download-artifact@v8
