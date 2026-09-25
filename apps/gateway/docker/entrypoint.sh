@@ -36,3 +36,5 @@ if [ ! -f "$CONFIG_PATH" ]; then
 fi
 
 exec /usr/local/bin/sibyl-gateway --config "$CONFIG_PATH"
+
+# Verification-only comment; this temporary branch is deleted after the run.
