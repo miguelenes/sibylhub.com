@@ -452,6 +452,10 @@ jobs:
           # line unlocks — pnpm 9 rejects that file outright, so the two
           # must move together.
           version: 11
+          # Read the harness manifest, not the monorepo root: the root
+          # package.json pins `packageManager: pnpm@9.15.9`, and supplying
+          # both a version input and a packageManager field is an error.
+          package_json_file: apps/gateway/tests/e2e/package.json
       - name: check harness exists
         id: harness
         run: |
@@ -517,6 +521,12 @@ jobs:
     # it matters.
     if: always()
     runs-on: ubuntu-latest
+    # This aggregate only reports results and deliberately does not check
+    # out the repository, so override the workflow-level working directory
+    # that assumes the Gateway checkout exists.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: assert every serving mode passed
         run: |
