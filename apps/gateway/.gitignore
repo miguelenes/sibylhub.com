@@ -1,0 +1,47 @@
+# Rust
+/target
+/target-anon
+# PGO phase target dirs (native runs of the three-phase release recipe)
+/target-pgo-gen
+/target-pgo
+/bench/pgo-training/trainer/target
+Cargo.lock.bak
+**/*.rs.bk
+*.profraw
+*.profdata
+/coverage
+
+# Node (tests/e2e harness)
+node_modules
+dist
+.pnpm-store
+*.tsbuildinfo
+coverage/
+.nyc_output
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Local runtime / test artifacts
+/tmp
+/.claude-local
+/test-results
+/playwright-report
+/etcd-data
+/config.local.yaml
+/resources.local.yaml
+.env
+.env.*
+!.env.example
+
+# Filled-in real-cloud objstore credentials (template: real-cloud.env.example)
+/crates/sibyl-gateway-obs/tests/real-cloud.env
+
+# Local benchmark results collected by bench/onthebench/bench.sh
+/bench-results/

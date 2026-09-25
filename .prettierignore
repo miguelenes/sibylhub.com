@@ -19,3 +19,9 @@ packages/schemas/generated
 packages/schemas/json-schema
 packages/schemas/fixtures
 openspec
+
+# The SibylHub Gateway (apps/gateway) is an independent Cargo workspace whose
+# formatting is owned by rustfmt, not Prettier. Its vendored TypeScript e2e
+# harness, Markdown, and manifests keep their upstream style; Prettier
+# checking them repo-wide would produce pure churn.
+apps/gateway/

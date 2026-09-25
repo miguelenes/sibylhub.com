@@ -1,6 +1,6 @@
 # SibylHub platform
 
-SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registry backoffice, a Rust API, a Rust workstation CLI, and a Docusaurus documentation site. The shared schema package is the contract boundary between those runtimes.
+SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registry backoffice, a Rust API, a Rust workstation CLI, the SibylHub Gateway (an AI traffic gateway), and a Docusaurus documentation site. The shared schema package is the contract boundary between those runtimes.
 
 ## Workspace
 
@@ -12,6 +12,7 @@ SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registr
 │   ├── backoffice/          Laravel, Filament, local SQLite registry source
 │   ├── backend/             Axum API and schema snapshot reader
 │   ├── cli/                 `sibyl` project analyzer and sync client
+│   ├── gateway/             SibylHub Gateway — Rust AI gateway (independent Cargo workspace)
 │   └── docs/                Docusaurus static documentation
 ├── packages/
 │   ├── schemas/             JSON Schema, Zod validators, fixtures
@@ -25,7 +26,7 @@ SibylHub is a mixed-runtime workspace for a public Astro site, a Laravel registr
 
 ## Prerequisites and setup
 
-Use Node 22.12.0 or a later Node 22 LTS release, pnpm 9.15.9, PHP 8.3 or later, Composer, and Rust 1.98 or later. The repository records these expectations in `.nvmrc`, `.node-version`, `rust-toolchain.toml`, and the package manifests.
+Use Node 22.12.0 or a later Node 22 LTS release, pnpm 9.15.9, PHP 8.3 or later, Composer, and Rust 1.98 or later. The gateway pins its own older Rust toolchain (1.93.1) through `apps/gateway/rust-toolchain.toml`; rustup installs it on demand. The repository records these expectations in `.nvmrc`, `.node-version`, `rust-toolchain.toml`, and the package manifests.
 
 ```sh
 corepack enable
@@ -42,7 +43,8 @@ The environment examples contain shape only. Copy them to local environment file
 
 | Command                 | Owner           | Local result                                                                                 |
 | ----------------------- | --------------- | -------------------------------------------------------------------------------------------- |
-| `pnpm dev`              | Turborepo       | Starts package development processes in parallel                                             |
+| `pnpm dev`              | Turborepo       | Starts package development processes in parallel (excluding the gateway)                     |
+| `pnpm dev:gateway`      | `apps/gateway`  | Starts the SibylHub Gateway with a local `config.local.yaml` (required, untracked)           |
 | `pnpm dev:web`          | `apps/web`      | Starts Astro development on port 4321                                                        |
 | `pnpm dev:backend`      | `apps/backend`  | Starts the Rust API on `0.0.0.0:8080`                                                        |
 | `pnpm build`            | Turborepo       | Builds schemas, design-system, web, backoffice assets, Rust release binaries, and docs       |
@@ -55,7 +57,7 @@ The environment examples contain shape only. Copy them to local environment file
 | `pnpm clean`            | Turborepo       | Removes generated package output and local Rust/Turbo output                                 |
 | `pnpm verify:contracts` | root dispatcher | Verifies generated schemas, deterministic fixtures, and cross-runtime contract shape offline |
 
-Package manifests document native commands. `packages/design-system` is owned by pnpm, builds ESM/declaration output plus `dist/styles/globals.css`, and provides the shared token stylesheet to the Filament theme. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer while consuming frontend assets through pnpm/Vite, and Rust uses Cargo. `wrangler deploy`, registry publication, database migrations, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
+Package manifests document native commands. `packages/design-system` is owned by pnpm, builds ESM/declaration output plus `dist/styles/globals.css`, and provides the shared token stylesheet to the Filament theme. `apps/web` previews the Worker shape through Wrangler, `apps/docs` emits `build/`, `apps/backoffice` uses Artisan and Composer while consuming frontend assets through pnpm/Vite, and Rust uses Cargo. `apps/gateway` is an independent Cargo workspace: its bridge tasks (`build`, `lint`, `typecheck`, `format`, `test`, `test:cov`, `clean`) run Cargo against its committed lockfile, and its prerequisite-dependent `test:e2e` and `test:mcp-conformance` tasks additionally require etcd, Redis, and a separate Node/pnpm harness — they are never cached and never run by root validation. `wrangler deploy`, registry publication, database migrations, gateway image publication, and `sibyl sync` are explicit side-effecting commands and are never run by ordinary build or test tasks.
 
 The workstation CLI command tree and its local registry/synchronization boundaries are documented in [`apps/cli/README.md`](apps/cli/README.md). Its release binary is `target/release/sibyl`.
 

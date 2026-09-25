@@ -1,0 +1,35 @@
+//! Read handlers for `/admin/v1/a2a_agents`: list and get-by-id, same
+//! shape as [`crate::models_handlers`]. The name is the path segment
+//! under which the agent is exposed (`/a2a/<name>`); its constraints
+//! and the per-auth_type credential coupling live in the canonical
+//! schema, enforced on every declarative write path.
+
+use axum::extract::{Path, State};
+use axum::Json;
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::A2aAgent;
+
+use crate::auth::AdminAuth;
+use crate::error::AdminError;
+use crate::state::AdminState;
+
+pub async fn list_a2a_agents(
+    _auth: AdminAuth,
+    State(state): State<AdminState>,
+) -> Result<Json<Vec<ResourceEntry<A2aAgent>>>, AdminError> {
+    let entries = state.store.list_a2a_agents().await?;
+    Ok(Json(entries))
+}
+
+pub async fn get_a2a_agent(
+    _auth: AdminAuth,
+    Path(id): Path<String>,
+    State(state): State<AdminState>,
+) -> Result<Json<ResourceEntry<A2aAgent>>, AdminError> {
+    let entry = state
+        .store
+        .get_a2a_agent(&id)
+        .await?
+        .ok_or(AdminError::NotFound)?;
+    Ok(Json(entry))
+}

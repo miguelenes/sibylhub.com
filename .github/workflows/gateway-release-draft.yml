@@ -1,0 +1,96 @@
+name: release-draft
+
+# Create a draft GitHub Release whenever a Gateway release tag (vX.Y.Z) is
+# pushed — the skeleton a maintainer polishes into curated notes before
+# publishing (see apps/gateway/RELEASING.md). Draft releases do not notify
+# watchers, so nothing goes out until a human publishes.
+#
+# The draft body leads with a fixed "Get started + Download" header
+# (apps/gateway/.github/release-notes-header.md, version-stamped from the
+# tag), then GitHub's auto-generated "What's Changed" list.
+#
+# No-op if a release for the tag already exists (e.g. created manually).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the release-notes header template
+        uses: actions/checkout@v7
+
+      - name: Create draft release with header + generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "release for $TAG already exists — nothing to do"
+            exit 0
+          fi
+
+          VERSION="${TAG#v}"            # v0.4.0 -> 0.4.0 (image tags carry no leading v)
+
+          # Rolling-tag sentence. A version tag is published in full only —
+          # there is no :X.Y or :X abbreviation — and docker-image.yml moves
+          # :latest for stable releases only, so a -rc draft must not advertise
+          # a `latest` tag that never points at it.
+          PKG="https://github.com/orgs/sibylhub/packages/container/package/gateway"
+          case "$TAG" in
+            *-*)
+              ROLLING="Other image tags and the \`docker.io/sibylhub/gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
+              ;;
+            *)
+              ROLLING="The rolling \`latest\` tag and the \`docker.io/sibylhub/gateway\` mirror for private/offline deployments are listed on the [package page]($PKG)."
+              ;;
+          esac
+
+          # Version-stamped docs + download header every release should lead with.
+          # '#' delimiter for __ROLLING_TAGS__ so the URL's slashes don't clash.
+          sed -e "s/__VERSION__/$VERSION/g" -e "s#__ROLLING_TAGS__#${ROLLING}#" \
+            apps/gateway/.github/release-notes-header.md > release-body.md
+
+          # GitHub's auto-generated "What's Changed" skeleton, appended below the
+          # header. Fall back to a bare heading so a transient API failure still
+          # produces a draft (with the header) instead of no release at all.
+          #
+          # Pin the range start to the last published STABLE release instead of
+          # letting GitHub pick it. A release is now preceded by its own
+          # `-rc.N` candidate tags, and auto-detection choosing one of those
+          # would collapse the changelog to the (usually empty) rc → final
+          # delta. Omitted for the first-ever release, where there is no
+          # previous stable one and auto-detection is correct.
+          # /releases/latest is defined as the newest published release that is
+          # neither a draft nor a prerelease — exactly the range start we want.
+          # 404s when there is none yet.
+          PREV=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ -n "$PREV" ] && [ "$PREV" != "null" ] && [ "$PREV" != "$TAG" ]; then
+            set -- -f previous_tag_name="$PREV"
+            echo "changelog range: $PREV..$TAG"
+          else
+            set --
+            echo "changelog range: auto-detected (no previous stable release)"
+          fi
+          gh api "repos/$REPO/releases/generate-notes" \
+            -f tag_name="$TAG" "$@" --jq .body >> release-body.md \
+            || printf '## What'"'"'s Changed\n' >> release-body.md
+
+          # Pre-release tags (v0.4.0-rc.1) get the prerelease flag.
+          case "$TAG" in *-*) PRE=--prerelease ;; *) PRE= ;; esac
+
+          gh release create "$TAG" -R "$REPO" $PRE \
+            --draft \
+            --notes-file release-body.md \
+            --title "$TAG"

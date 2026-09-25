@@ -1,0 +1,2429 @@
+//! Per-env OTLP/HTTP exporter — emits one OTLP-shaped span per chat request
+//! to each configured `ObservabilityExporter` (kind=otlp_http).
+//!
+//! ## Design
+//!
+//! cp-api projects every configured exporter onto kine at
+//! `/sibyl-gateway/<env>/observability_exporters/<uuid>`. The DP loads them via the
+//! existing etcd watch into `GatewaySnapshot::observability_exporters`. After
+//! every chat completion the proxy hot path hands the resulting `UsageEvent`
+//! plus the live snapshot's exporter list to [`OtlpHttpFanOut::fan_out`],
+//! which:
+//!
+//! 1. Filters to enabled exporters with `kind = OtlpHttp`.
+//! 2. Resolves each exporter's [`crate::sink::SinkPipeline`] (lazily started
+//!    on first sighting, immediately consistent with the snapshot) and
+//!    enqueues one OTLP span record into it. The pipeline batches, retries
+//!    transient failures with backoff, and drops-with-metric under
+//!    backpressure — all off the request hot path. Spans are encoded per
+//!    OpenTelemetry's GenAI semantic conventions
+//!    (<https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-spans.md>).
+//!
+//! ## Per-exporter knobs (#519 B.2)
+//!
+//! - **`sample_rate`** — fraction of requests exported, decided per REQUEST
+//!   from a deterministic FNV-1a hash of `request_id` (absent = 1.0). The
+//!   decision happens at fan-out time, before any pipeline work, so a
+//!   dropped request enqueues nothing for that exporter; and because every
+//!   attempt span of one request shares the `request_id`, a trace is
+//!   exported whole or not at all — consistently across retries/fallbacks.
+//! - **`content_mode` / `content_max_bytes`** — same opt-in content capture
+//!   the SLS / Datadog sinks use ([`content_record`]); under `full` the span
+//!   carries `gen_ai.prompt` / `gen_ai.completion` (plus
+//!   `sibyl-gateway.content_truncated` when cut) — the same keys the Datadog sink
+//!   ships the captured content under. Defaults to `metadata_only`, where
+//!   the record never carries content fields, so it cannot leak.
+//!
+//! ## What's intentionally NOT here yet
+//!
+//! - **No gRPC** — `otlp_grpc` is a separate kind we'll add when a user
+//!   actually asks for it; the JSON-over-HTTP form works against every
+//!   receiver in the wild and avoids pulling in tonic on the hot path.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use sibyl_gateway_core::models::{
+    AliyunSlsConfig, DatadogConfig, ExporterKind, ObjectStoreConfig, ObservabilityExporter,
+    OtlpHttpConfig, SlsContentMode,
+};
+
+use crate::metrics::Metrics;
+use crate::sink::{
+    build_object_store_sink, resolve_datadog_credential, resolve_sls_credential, AliyunSlsSink,
+    BatchUnit, CapturedContent, DatadogSink, EventBatch, ExporterPipelines, IdempotencyMarker,
+    IdempotencyScheme, ObservabilitySink, OrderingScope, PipelineConfig, SinkAck, SinkCapabilities,
+    SinkContent, SinkError, SinkHealth, SinkRecord, SinkResult, SinkStatsSnapshot,
+};
+use crate::usage::UsageEvent;
+
+/// Wall-clock duration of an OTLP/HTTP POST before we abandon it.
+/// Tight on purpose — we never want a slow exporter to backlog tokio
+/// tasks for a wedged user receiver.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Fans usage events out to every configured observability exporter — any
+/// [`ExporterKind`], dispatched per kind to the matching
+/// [`crate::sink::ObservabilitySink`] — each via its own
+/// [`crate::sink::SinkPipeline`] (batched, retried, backpressured). Cheap
+/// clonable handle; the per-exporter pipelines and the shared `reqwest::Client`
+/// live behind an `Arc`. Pipelines start lazily on first sighting of an
+/// exporter (immediately consistent with the snapshot) and are GC'd by
+/// [`OtlpHttpFanOut::gc`] when an exporter leaves it.
+///
+/// NOTE: the type name is historical — it drove only `otlp_http` originally
+/// and now fans out all kinds. A rename to `ExporterFanOut` (plus the
+/// `ProxyState::otlp_fan_out` field) is a mechanical, behaviour-preserving
+/// follow-up kept out of this change to avoid churning every call site.
+#[derive(Clone)]
+pub struct OtlpHttpFanOut {
+    inner: Arc<FanOutInner>,
+}
+
+struct FanOutInner {
+    /// Per-exporter delivery pipelines (one batched worker each).
+    exporters: ExporterPipelines,
+    /// Shared HTTP client handed to every sink (connection-pool reuse).
+    client: reqwest::Client,
+}
+
+/// Delivery tuning for otlp exporter pipelines. A short flush keeps a
+/// single-request span visible quickly (the old fan-out posted each event
+/// immediately); batching + retry + drop accounting come from the pipeline.
+fn exporter_pipeline_config() -> PipelineConfig {
+    PipelineConfig {
+        flush_interval: Duration::from_secs(1),
+        ..PipelineConfig::default()
+    }
+}
+
+impl OtlpHttpFanOut {
+    pub fn new() -> Self {
+        Self::build(None)
+    }
+
+    /// As [`Self::new`], emitting the per-exporter fan-out drop and
+    /// failure counters on `metrics`. Without it the fan-out still runs
+    /// and still accounts drops in [`SinkStatsSnapshot`] — but nothing
+    /// reaches `GET /metrics`, which is the gap #1060 names.
+    pub fn with_metrics(metrics: Metrics) -> Self {
+        Self::build(Some(metrics))
+    }
+
+    fn build(metrics: Option<Metrics>) -> Self {
+        let client = sibyl_gateway_hub::client_builder()
+            .timeout(REQUEST_TIMEOUT)
+            .user_agent(format!("aisix-dp/{}", sibyl_gateway_core::BUILD_VERSION))
+            .build()
+            // The client builder only fails on illegal TLS roots; the
+            // default config is always valid.
+            .expect("reqwest::Client default config is valid");
+        Self {
+            inner: Arc::new(FanOutInner {
+                exporters: {
+                    let p = ExporterPipelines::new(exporter_pipeline_config());
+                    match metrics {
+                        Some(m) => p.with_metrics(m),
+                        None => p,
+                    }
+                },
+                client,
+            }),
+        }
+    }
+
+    /// Fan one event out to every enabled exporter, dispatched per kind and
+    /// enqueued into that exporter's pipeline (lazily started on first
+    /// sighting). The pipeline owns batching / retry / backpressure; enqueue is
+    /// non-blocking, so this never blocks the request hot path. Empty list =
+    /// cheap no-op.
+    ///
+    /// `content` is the request's captured prompt/response, or `None` when the
+    /// handler captured none (the default). It is attached ONLY to an
+    /// `aliyun_sls`, `datadog`, or `otlp_http` exporter whose
+    /// `content_mode = full`; every other exporter — and the CP telemetry
+    /// path, which is not in this loop — receives the shared metadata-only
+    /// record, so prompt/response can never leak there.
+    ///
+    /// `trace` is the event's span snapshot (AISIX-Cloud#1279) — ids and
+    /// boundaries frozen at emission time by the request's trace bundle.
+    /// It rides every record unchanged (`SinkRecord::trace` is
+    /// serde-skipped, so only the OTLP encoder reads it), which is what
+    /// makes span ids byte-identical across delivery retries and across
+    /// exporters. `None` (a caller predating the bundle, or a synthetic
+    /// event) falls back to the legacy single-span encoding.
+    pub fn fan_out<'a, I>(
+        &self,
+        event: &UsageEvent,
+        content: Option<&CapturedContent>,
+        trace: Option<&crate::trace::TraceEmission>,
+        exporters: I,
+    ) where
+        I: IntoIterator<Item = &'a ObservabilityExporter>,
+    {
+        // The shared metadata-only record, built once on first sighting and
+        // reused by every exporter that does not capture content.
+        let mut metadata_record: Option<Arc<SinkRecord>> = None;
+        for exp in exporters {
+            if !exp.enabled {
+                continue;
+            }
+
+            // Dispatch on kind: each arm fingerprints its delivery-relevant
+            // config (so a dashboard edit rebuilds the pipeline) and lazily
+            // builds the matching sink. All kinds share one `ExporterPipelines`
+            // manager and the pooled client. A new `ExporterKind` variant
+            // makes this `match` non-exhaustive — a compile-time prompt to wire
+            // its sink here.
+            let client = self.inner.client.clone();
+            let handle = match &exp.kind {
+                ExporterKind::OtlpHttp(cfg) => {
+                    // Per-request sampling (#519 B.2), decided here — before
+                    // any pipeline work — so an unsampled request enqueues
+                    // nothing for THIS exporter (other exporters in the loop
+                    // still see the event). Deterministic on `request_id`, so
+                    // every attempt span of one request drops or ships
+                    // together.
+                    if !otlp_should_sample(cfg.sample_rate, &event.request_id) {
+                        continue;
+                    }
+                    let fingerprint = fingerprint_otlp(cfg);
+                    let name = exp.name.clone();
+                    let endpoint = cfg.endpoint.clone();
+                    let headers = cfg.headers.clone();
+                    self.inner
+                        .exporters
+                        .get_or_create(&exp.name, fingerprint, move || {
+                            Arc::new(OtlpSink::new(name, endpoint, headers, client))
+                                as Arc<dyn ObservabilitySink>
+                        })
+                }
+                ExporterKind::AliyunSls(cfg) => {
+                    let fingerprint = fingerprint_sls(cfg);
+                    let name = exp.name.clone();
+                    let cfg = cfg.clone();
+                    self.inner
+                        .exporters
+                        .get_or_create(&exp.name, fingerprint, move || {
+                            // Resolve the AccessKey from the DP's local env at
+                            // build time (the key never rode the kine path).
+                            // Missing creds → empty key → SLS 401 surfaces as a
+                            // delivery-health auth error, not a silent drop.
+                            let (ak_id, ak_secret) =
+                                resolve_sls_credential(&cfg.credential_ref).unwrap_or_default();
+                            Arc::new(AliyunSlsSink::new(
+                                name,
+                                &cfg.endpoint,
+                                &cfg.project,
+                                &cfg.logstore,
+                                ak_id,
+                                ak_secret,
+                                client,
+                            )) as Arc<dyn ObservabilitySink>
+                        })
+                }
+                ExporterKind::ObjectStore(cfg) => {
+                    let fingerprint = fingerprint_object_store(cfg);
+                    let name = exp.name.clone();
+                    let cfg = cfg.clone();
+                    self.inner
+                        .exporters
+                        .get_or_create(&exp.name, fingerprint, move || {
+                            // Resolve cloud creds from the DP's local env and
+                            // build the backend at build time. Missing creds or
+                            // an un-buildable backend yield a sink that reports
+                            // the reason via delivery health (never a silent
+                            // drop) — mirroring the SLS path.
+                            build_object_store_sink(name, &cfg)
+                        })
+                }
+                ExporterKind::Datadog(cfg) => {
+                    let fingerprint = fingerprint_datadog(cfg);
+                    let name = exp.name.clone();
+                    let cfg = cfg.clone();
+                    self.inner
+                        .exporters
+                        .get_or_create(&exp.name, fingerprint, move || {
+                            // Resolve the Datadog API key from the DP's local
+                            // env at build time (the key never rode the kine
+                            // path). Missing key → empty → Datadog 403 surfaces
+                            // as a delivery-health auth error, not a silent drop
+                            // — mirroring the SLS path.
+                            let api_key =
+                                resolve_datadog_credential(&cfg.credential_ref).unwrap_or_default();
+                            Arc::new(DatadogSink::new(
+                                name,
+                                &cfg.site,
+                                api_key,
+                                &cfg.ddsource,
+                                &cfg.tags,
+                                &cfg.service,
+                                client,
+                            )) as Arc<dyn ObservabilitySink>
+                        })
+                }
+            };
+
+            // A content-bearing record for an SLS exporter that opted into
+            // full capture (and only when the handler captured content); the
+            // shared metadata-only record for everyone else.
+            let record = content_record(&exp.kind, event, content, trace).unwrap_or_else(|| {
+                Arc::clone(metadata_record.get_or_insert_with(|| {
+                    Arc::new(SinkRecord::metadata_only(event.clone()).with_trace(trace.cloned()))
+                }))
+            });
+            handle.try_enqueue(record);
+        }
+    }
+
+    /// Stop pipelines for exporters no longer present in `live` (the current
+    /// snapshot's enabled exporter names, across all kinds). Called
+    /// periodically by the server to GC pipelines for deleted / disabled
+    /// exporters.
+    pub fn gc(&self, live: &std::collections::HashSet<String>) {
+        self.inner.exporters.retain(live);
+    }
+
+    /// Per-exporter delivery counters, keyed by exporter name. Read by the
+    /// managed-mode heartbeat to report `exporter_health` to cp-api
+    /// (#519 D.2). Counters are per-pipeline: a reconfigured exporter gets
+    /// a rebuilt pipeline, so its counters reset — consumers must treat
+    /// them as resettable.
+    pub fn exporter_stats(&self) -> std::collections::HashMap<String, SinkStatsSnapshot> {
+        self.inner.exporters.stats()
+    }
+
+    /// Drain every exporter pipeline at graceful shutdown.
+    pub async fn shutdown(&self) {
+        self.inner.exporters.shutdown().await;
+    }
+}
+
+impl Default for OtlpHttpFanOut {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Hash an `otlp_http` exporter's delivery-relevant config. A change to any
+/// field — endpoint, headers, or the #519 B.2 knobs (sample_rate / content
+/// config) — yields a new fingerprint, so the manager rebuilds the exporter's
+/// pipeline against the edited config. `sample_rate` hashes by bit pattern
+/// (`f64` has no `Hash`); the schema bounds it to finite 0.0–1.0, where bit
+/// equality is value equality.
+fn fingerprint_otlp(cfg: &OtlpHttpConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    cfg.endpoint.hash(&mut hasher);
+    cfg.headers.hash(&mut hasher);
+    cfg.sample_rate.map(f64::to_bits).hash(&mut hasher);
+    cfg.content_mode.hash(&mut hasher);
+    cfg.content_max_bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Granularity of the sampling decision: rates are compared at 1/10_000
+/// (0.01%) resolution, plenty for an operator-facing percentage knob.
+const SAMPLE_PRECISION: u64 = 10_000;
+
+/// Salt mixed into the sampling hash, drawn once per process.
+///
+/// Without it the bucket is a pure function of `request_id` — and since
+/// AISIX-Cloud#1288 the caller may choose that id. A caller could then grind
+/// FNV-1a (which is trivially cheap) for ids that land outside the configured
+/// bucket and make its own traffic invisible to a sampled exporter, or inside
+/// it to force itself into every trace. The salt is not caller-observable, so
+/// the bucket is no longer predictable off the wire.
+static SAMPLE_SALT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+fn sample_salt() -> u64 {
+    *SAMPLE_SALT.get_or_init(|| uuid::Uuid::new_v4().as_u128() as u64)
+}
+
+/// Per-request sampling decision for an `otlp_http` exporter. `rate` is the
+/// exporter's `sample_rate` (`None` = 1.0, the pre-knob default).
+///
+/// No clock: the request's `request_id` is hashed (FNV-1a 64) together with a
+/// per-process salt into a bucket in `0..SAMPLE_PRECISION`, and the request is
+/// sampled when the bucket falls below `rate × SAMPLE_PRECISION`. Within a
+/// process the same id always gets the same decision, so the per-attempt
+/// events of one request (#655, which share `request_id`) are exported
+/// all-or-nothing — they are emitted by the process that served the request,
+/// which is the only place that guarantee is needed.
+///
+/// Replicas therefore sample different subsets, and a restart reshuffles.
+/// That is the deliberate cost of the salt (see [`SAMPLE_SALT`]); the property
+/// it replaces — every replica choosing the identical set — only had meaning
+/// when ids were gateway-minted UUIDs that could not repeat across replicas.
+///
+/// Note this samples per REQUEST, not per caller: a caller that reuses one id
+/// across many requests still gets one decision for all of them, so a heavily
+/// id-reusing client can skew what fraction of total traffic an exporter sees.
+fn otlp_should_sample(rate: Option<f64>, request_id: &str) -> bool {
+    let rate = rate.unwrap_or(1.0);
+    if rate >= 1.0 {
+        return true;
+    }
+    if rate <= 0.0 {
+        return false;
+    }
+    let threshold = (rate * SAMPLE_PRECISION as f64).round() as u64;
+    let mut salted = [0u8; 8].to_vec();
+    salted.copy_from_slice(&sample_salt().to_le_bytes());
+    salted.extend_from_slice(request_id.as_bytes());
+    fnv1a_64(&salted) % SAMPLE_PRECISION < threshold
+}
+
+/// FNV-1a 64-bit — implemented inline (a fold over two constants) so the
+/// sampling hash is under our control and documented, rather than tied to
+/// `DefaultHasher`'s unspecified algorithm or a `rand` dependency.
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    bytes.iter().fold(OFFSET_BASIS, |hash, b| {
+        (hash ^ u64::from(*b)).wrapping_mul(PRIME)
+    })
+}
+
+/// Hash an `aliyun_sls` exporter's delivery-relevant config. The fingerprint
+/// covers only kine-visible fields (endpoint / project / logstore /
+/// credential_ref), never the resolved AccessKey — rotating the secret under
+/// the *same* reference therefore takes effect on the next DP restart, not
+/// live. A ref change does rebuild the pipeline.
+fn fingerprint_sls(cfg: &AliyunSlsConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    cfg.endpoint.hash(&mut hasher);
+    cfg.project.hash(&mut hasher);
+    cfg.logstore.hash(&mut hasher);
+    cfg.credential_ref.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The content-bearing [`SinkRecord`] for one exporter, or `None` to fall back
+/// to the shared metadata-only record.
+///
+/// Content is attached ONLY to an `aliyun_sls`, `datadog`, OR `otlp_http`
+/// exporter whose `content_mode = full`, and ONLY when the handler captured
+/// content — every other exporter (and the CP telemetry path, which never
+/// enters the fan-out) gets metadata only. The captured prompt/response are
+/// truncated to the exporter's `content_max_bytes`, ORing in any truncation
+/// the handler already applied at capture time.
+fn content_record(
+    kind: &ExporterKind,
+    event: &UsageEvent,
+    content: Option<&CapturedContent>,
+    trace: Option<&crate::trace::TraceEmission>,
+) -> Option<Arc<SinkRecord>> {
+    // The exporters that opt into full content capture share the
+    // `SlsContentMode` model; pull each one's (mode, cap). Any other kind
+    // never carries content, so prompt/response can't leak into it.
+    let (mode, max_bytes) = match kind {
+        ExporterKind::AliyunSls(cfg) => (cfg.content_mode, cfg.content_max_bytes),
+        ExporterKind::Datadog(cfg) => (cfg.content_mode, cfg.content_max_bytes),
+        ExporterKind::OtlpHttp(cfg) => (cfg.content_mode, cfg.content_max_bytes),
+        _ => return None,
+    };
+    if mode != SlsContentMode::Full {
+        return None;
+    }
+    let captured = content?;
+    let mut sc = SinkContent::capture(&captured.prompt, &captured.response, max_bytes as usize);
+    sc.truncated = sc.truncated || captured.truncated;
+    Some(Arc::new(
+        SinkRecord::metadata_only(event.clone())
+            .with_content(sc)
+            .with_trace(trace.cloned()),
+    ))
+}
+
+/// The largest `content_max_bytes` among the env's enabled exporters that
+/// capture full content, or `None` if none do.
+///
+/// A request handler calls this BEFORE doing any capture work: `None` means no
+/// exporter wants prompt/response, so the handler skips capture entirely (no
+/// body clone, no stream accumulation — zero hot-path cost). `Some(cap)` is the
+/// bound the handler caps its capture at; each exporter then re-truncates to
+/// its own (≤ cap) limit at delivery.
+pub fn content_capture_cap<'a>(
+    exporters: impl IntoIterator<Item = &'a ObservabilityExporter>,
+) -> Option<u32> {
+    exporters
+        .into_iter()
+        .filter(|e| e.enabled)
+        .filter_map(|e| match &e.kind {
+            ExporterKind::AliyunSls(cfg) if cfg.content_mode == SlsContentMode::Full => {
+                Some(cfg.content_max_bytes)
+            }
+            ExporterKind::Datadog(cfg) if cfg.content_mode == SlsContentMode::Full => {
+                Some(cfg.content_max_bytes)
+            }
+            ExporterKind::OtlpHttp(cfg) if cfg.content_mode == SlsContentMode::Full => {
+                Some(cfg.content_max_bytes)
+            }
+            _ => None,
+        })
+        .max()
+}
+
+/// Hash an `object_store` exporter's delivery-relevant config. Covers only
+/// kine-visible fields (provider / bucket / prefix / region / endpoint /
+/// compression / credential_ref), never the resolved cloud key — rotating the
+/// secret under the *same* reference therefore takes effect on the next DP
+/// restart, not live. Any field change rebuilds the pipeline.
+fn fingerprint_object_store(cfg: &ObjectStoreConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    cfg.provider.hash(&mut hasher);
+    cfg.bucket.hash(&mut hasher);
+    cfg.prefix.hash(&mut hasher);
+    cfg.region.hash(&mut hasher);
+    cfg.endpoint.hash(&mut hasher);
+    cfg.compression.hash(&mut hasher);
+    cfg.credential_ref.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Hash a `datadog` exporter's delivery-relevant config. Covers only
+/// kine-visible fields (site / credential_ref / service / ddsource / tags /
+/// content config), never the resolved API key — rotating the secret under the
+/// *same* reference therefore takes effect on the next DP restart, not live. A
+/// ref change (or any other field change) rebuilds the pipeline.
+fn fingerprint_datadog(cfg: &DatadogConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    cfg.site.hash(&mut hasher);
+    cfg.credential_ref.hash(&mut hasher);
+    cfg.service.hash(&mut hasher);
+    cfg.ddsource.hash(&mut hasher);
+    cfg.tags.hash(&mut hasher);
+    cfg.content_mode.hash(&mut hasher);
+    cfg.content_max_bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// An [`ObservabilitySink`] over the OTLP/HTTP-JSON traces protocol — the
+/// same wire shape as [`OtlpHttpFanOut`], but driven by the shared
+/// [`crate::sink::SinkPipeline`] (batched, retried, backpressured) rather
+/// than a per-event fire-and-forget spawn. One instance per configured
+/// `otlp_http` exporter.
+pub struct OtlpSink {
+    name: String,
+    endpoint: String,
+    headers: BTreeMap<String, String>,
+    client: reqwest::Client,
+}
+
+impl OtlpSink {
+    /// Build a sink for one exporter. The `client` is shared across sinks so
+    /// connection pools and TLS sessions are reused.
+    pub fn new(
+        name: impl Into<String>,
+        endpoint: impl Into<String>,
+        headers: BTreeMap<String, String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            endpoint: endpoint.into(),
+            headers,
+            client,
+        }
+    }
+}
+
+#[async_trait]
+impl ObservabilitySink for OtlpSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn capabilities(&self) -> SinkCapabilities {
+        SinkCapabilities {
+            idempotency: IdempotencyScheme::None,
+            ordering: OrderingScope::None,
+            batch_unit: BatchUnit::Records,
+            // OTLP spans are small and receivers accept large payloads; the
+            // sink does not split by bytes, so no pipeline-enforced ceiling.
+            max_batch_bytes: None,
+            supports_partial_batch: false,
+            supports_streaming_ingest: false,
+        }
+    }
+
+    async fn append_batch(&self, batch: &EventBatch, _marker: &IdempotencyMarker) -> SinkResult {
+        if batch.is_empty() {
+            return Ok(SinkAck::default());
+        }
+        // One export request carrying every record's spans — one POST, one
+        // atomic retry unit (vs. the per-event fan-out's N spawns).
+        let spans: Vec<Value> = batch
+            .records
+            .iter()
+            .flat_map(|record| build_otlp_spans(record, &self.name))
+            .collect();
+        let body = otlp_export_request(spans);
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|e| SinkError::Permanent(format!("otlp encode: {e}")))?;
+
+        let mut req = self
+            .client
+            .post(&self.endpoint)
+            .header("Content-Type", "application/json")
+            .body(bytes);
+        for (key, value) in &self.headers {
+            req = req.header(key, value);
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    return Ok(SinkAck {
+                        accepted: batch.len(),
+                        ..SinkAck::default()
+                    });
+                }
+                let retry_after = crate::sink::retry_after_of(status, resp.headers());
+                let text = resp.text().await.unwrap_or_default();
+                let detail = format!(
+                    "HTTP {}: {}",
+                    status,
+                    text.chars().take(200).collect::<String>()
+                );
+                // 5xx / 408 / 429 are worth retrying; other 4xx are
+                // config/auth/payload errors that will fail identically.
+                if status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                {
+                    Err(match retry_after {
+                        Some(retry_after) => SinkError::Throttled {
+                            retry_after,
+                            detail,
+                        },
+                        None => SinkError::Transient(detail),
+                    })
+                } else {
+                    Err(SinkError::Permanent(detail))
+                }
+            }
+            // Connect / DNS / timeout — transient by nature. reqwest's
+            // Display hides the cause in `source()` — chain it.
+            Err(e) => Err(SinkError::Transient(format!(
+                "POST {}: {}",
+                self.endpoint,
+                crate::sink::error_chain(&e)
+            ))),
+        }
+    }
+
+    async fn healthcheck(&self) -> SinkHealth {
+        // A real connectivity probe (and the control-plane "test connection"
+        // affordance) lands with the health/metrics surface; until then a
+        // sink reports healthy and its delivery errors surface via
+        // `SinkStats::last_error`.
+        SinkHealth::healthy()
+    }
+}
+
+/// Build the single OTLP span object for one sink record. Attribute names
+/// match the OpenTelemetry GenAI semantic conventions:
+/// <https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-spans.md>.
+///
+/// Per-attribute encoding:
+/// - String / int values use the canonical `{"stringValue": ...}` /
+///   `{"intValue": "..."}` (string-encoded int per OTLP/JSON spec).
+/// - Trace ID + span ID are random 16-byte / 8-byte hex values.
+/// - Timestamps are nanos-since-epoch, OTLP's required unit.
+///
+/// When the record carries captured content (this exporter's
+/// `content_mode = full`, see [`content_record`]) the span additionally
+/// carries `gen_ai.prompt` / `gen_ai.completion` — the same prompt /
+/// assembled response the Datadog sink ships under those keys — plus
+/// `sibyl-gateway.content_truncated` when either field was cut to the exporter's
+/// `content_max_bytes`. Metadata-only records never carry content, so the
+/// default span shape is unchanged.
+fn build_otlp_span(record: &SinkRecord, exporter_name: &str) -> Value {
+    let event = &record.usage;
+    let trace_id = random_trace_id();
+    let span_id = random_span_id();
+
+    // The DP records `occurred_at` as RFC 3339; convert to nanos.
+    // On parse failure (shouldn't happen in practice) fall back to
+    // "now" so the span isn't silently dropped.
+    let end_unix_nano =
+        parse_rfc3339_to_unix_nano(&event.occurred_at).unwrap_or_else(now_unix_nano);
+    // The span represents this ATTEMPT, so its duration is the
+    // attempt-scoped upstream latency (the request-scoped
+    // `downstream_latency_ms` rides along as an attribute instead).
+    // Latency landed in milliseconds; widen + multiply.
+    let latency_nanos = (event.upstream_latency_ms as u128).saturating_mul(1_000_000);
+    let start_unix_nano = end_unix_nano.saturating_sub(latency_nanos);
+
+    json!({
+        "traceId": trace_id,
+        "spanId":  span_id,
+        "name":    span_name(event),
+        // SPAN_KIND_CLIENT for all three: the gateway is the client of a
+        // remote LLM, agent or MCP server. The conventions name INTERNAL for
+        // a tool executed in-process, which is not what this span describes.
+        "kind":    3,
+        "startTimeUnixNano": start_unix_nano.to_string(),
+        "endTimeUnixNano":   end_unix_nano.to_string(),
+        "attributes": event_attributes(record, exporter_name),
+        "status": { "code": span_status(event.status_code) },
+    })
+}
+
+/// Encode one sink record into its OTLP span set.
+///
+/// A record carrying a [`crate::trace::TraceEmission`] (AISIX-Cloud#1279)
+/// yields the request's span hierarchy — SERVER → logical GenAI CLIENT →
+/// attempt CLIENT — with ids and nanosecond boundaries frozen at emission
+/// time, so a delivery retry re-encodes byte-identical spans and every
+/// exporter agrees on the trace. A record without one (a caller predating
+/// the bundle, or a synthetic event) falls back to the legacy single-span
+/// shape of [`build_otlp_span`].
+fn build_otlp_spans(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
+    use crate::trace::SpanRole;
+
+    let Some(trace) = &record.trace else {
+        return vec![build_otlp_span(record, exporter_name)];
+    };
+    let event = &record.usage;
+    let trace_id = trace.trace_id.to_hex();
+    let status = span_status(event.status_code);
+    let carrier = trace.carrier_role();
+    trace
+        .spans
+        .iter()
+        .map(|span| {
+            // The carrier span — the attempt when present, else the
+            // logical CLIENT, else SERVER — gets the event's full
+            // attribute set (and captured content); the structural spans
+            // above it carry only what a consumer needs to join them.
+            let attributes = if Some(span.role) == carrier {
+                event_attributes(record, exporter_name)
+            } else {
+                structural_attributes(event, exporter_name)
+            };
+            // OTLP SpanKind: SERVER (2) for the inbound request; CLIENT
+            // (3) for the logical GenAI operation and each upstream
+            // attempt.
+            let kind = match span.role {
+                SpanRole::Server => 2,
+                SpanRole::Logical | SpanRole::Attempt => 3,
+            };
+            let mut json = json!({
+                "traceId": trace_id,
+                "spanId": span.span_id.to_hex(),
+                "name": span_name(event),
+                "kind": kind,
+                "startTimeUnixNano": span.start_unix_nano.to_string(),
+                "endTimeUnixNano": span.end_unix_nano.to_string(),
+                "attributes": attributes,
+                "status": { "code": status },
+                "flags": span_flags(span, trace),
+            });
+            if let Some(parent) = span.parent_span_id {
+                json["parentSpanId"] = Value::String(parent.to_hex());
+            }
+            // The caller's tracestate belongs to the propagated context;
+            // it rides the SERVER span, the one that continues it.
+            if span.role == SpanRole::Server {
+                if let Some(state) = &trace.tracestate {
+                    json["traceState"] = Value::String(state.clone());
+                }
+            }
+            json
+        })
+        .collect()
+}
+
+/// OTLP span `flags` (uint32): the low byte is the span's W3C trace-flags
+/// — always `sampled`, since encoding IS the export decision, plus the
+/// inbound octet's `random` bit (0x02) on a SERVER span continuing a
+/// remote trace — and `HAS_IS_REMOTE` (bit 8) on every span, with
+/// `IS_REMOTE` (bit 9) on a SERVER span whose parent arrived over the
+/// wire in `traceparent`.
+fn span_flags(span: &crate::trace::SpanEmit, trace: &crate::trace::TraceEmission) -> u32 {
+    const SAMPLED: u32 = 0x01;
+    const W3C_RANDOM: u32 = 0x02;
+    const HAS_IS_REMOTE: u32 = 0x100;
+    const IS_REMOTE: u32 = 0x200;
+    let remote = span.role == crate::trace::SpanRole::Server
+        && span.parent_span_id.is_some()
+        && trace.remote_flags.is_some();
+    let mut flags = SAMPLED | HAS_IS_REMOTE;
+    if remote {
+        flags |= IS_REMOTE;
+        // The random bit describes the trace id, which the remote parent
+        // minted — preserve its claim; never invent it for local roots.
+        flags |= u32::from(trace.remote_flags.unwrap_or(0)) & W3C_RANDOM;
+    }
+    flags
+}
+
+/// The joining attributes a structural (non-carrier) span carries: enough
+/// to group a trace's spans by request and operation without duplicating
+/// the event's full attribute set onto every level of the hierarchy.
+fn structural_attributes(event: &UsageEvent, exporter_name: &str) -> Vec<Value> {
+    let mut attributes = vec![
+        attr_string("gen_ai.system", "sibyl-gateway"),
+        attr_string("gen_ai.operation.name", operation_name(event)),
+        attr_string("sibyl-gateway.exporter_name", exporter_name),
+        attr_string("sibyl-gateway.request_id", &event.request_id),
+        attr_int("http.response.status_code", event.status_code as i64),
+    ];
+    if !event.operation.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.operation", &event.operation));
+    }
+    if !event.requested_model.is_empty() {
+        attributes.push(attr_string("gen_ai.request.model", &event.requested_model));
+    }
+    attributes
+}
+
+/// Status: OK (1) for 2xx, ERROR (2) otherwise.
+fn span_status(status: u16) -> i64 {
+    if (200..300).contains(&status) {
+        1
+    } else {
+        2
+    }
+}
+
+/// The event's full attribute set — every wire field the OTLP allowlist
+/// exports, plus captured content when the record carries it. Attached to
+/// the legacy single span and to the hierarchy's carrier span.
+fn event_attributes(record: &SinkRecord, exporter_name: &str) -> Vec<Value> {
+    let event = &record.usage;
+    let mut attributes = vec![
+        attr_string("gen_ai.system", "sibyl-gateway"),
+        attr_string("gen_ai.operation.name", operation_name(event)),
+    ];
+    // The gateway's own, finer reading of the same thing. The semconv value
+    // above is constrained to OpenTelemetry's vocabulary, so every
+    // OpenAI-shaped route lands on `chat` there — which cannot separate a
+    // conversation from an image or a video (AISIX-Cloud#1461). Carried on
+    // the structural spans too, so a trace can be filtered by kind at its
+    // root rather than only on the attempt span. Absent, like every other
+    // optional attribute here, when the event carries no value.
+    if !event.operation.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.operation", &event.operation));
+    }
+    // The model alias the client sent (`model` field) — a Model-Group
+    // name for routed requests (AISIX-Cloud#790). Semconv key for the
+    // requested (vs response) model.
+    if !event.requested_model.is_empty() {
+        attributes.push(attr_string("gen_ai.request.model", &event.requested_model));
+    }
+    if !event.provider_model_version.is_empty() {
+        attributes.push(attr_string(
+            "gen_ai.response.model",
+            &event.provider_model_version,
+        ));
+    }
+    if !event.provider_request_id.is_empty() {
+        attributes.push(attr_string(
+            "gen_ai.response.id",
+            &event.provider_request_id,
+        ));
+    }
+    if !event.finish_reason.is_empty() {
+        attributes.push(attr_string_array(
+            "gen_ai.response.finish_reasons",
+            std::slice::from_ref(&event.finish_reason),
+        ));
+    }
+    attributes.push(attr_int(
+        "gen_ai.usage.input_tokens",
+        event.prompt_tokens as i64,
+    ));
+    attributes.push(attr_int(
+        "gen_ai.usage.output_tokens",
+        event.completion_tokens as i64,
+    ));
+    attributes.push(attr_int(
+        "http.response.status_code",
+        event.status_code as i64,
+    ));
+    if !event.api_key_id.is_empty() {
+        // Custom attribute (no semconv yet) so reviewers can join
+        // spans back to the SibylHub Gateway api_key dashboard.
+        attributes.push(attr_string("sibyl-gateway.api_key_id", &event.api_key_id));
+    }
+    // The org member behind the credential (AISIX-Cloud#1389). Exported
+    // beside the key rather than derived from it downstream: a member can
+    // hold several keys, and a key can be rebound to someone else.
+    if !event.user_id.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.user_id", &event.user_id));
+    }
+    if !event.model_id.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.model_id", &event.model_id));
+    }
+    // Duration cost basis (#457): only the duration-billed audio models
+    // carry it, so it stays off every other span.
+    if event.audio_duration_seconds > 0.0 {
+        attributes.push(attr_double(
+            "sibyl-gateway.audio.duration_seconds",
+            event.audio_duration_seconds,
+        ));
+    }
+    attributes.push(attr_string("sibyl-gateway.exporter_name", exporter_name));
+    attributes.push(attr_string("sibyl-gateway.request_id", &event.request_id));
+    if event.upstream_ttft_ms > 0 {
+        attributes.push(attr_int(
+            "sibyl-gateway.upstream_ttft_ms",
+            event.upstream_ttft_ms as i64,
+        ));
+    }
+    // Request-scoped: present only on the attempt that delivered the
+    // terminal response, so consumers read a request's caller-facing
+    // latency off that one span rather than summing the group.
+    if event.downstream_latency_ms > 0 {
+        attributes.push(attr_int(
+            "sibyl-gateway.downstream_latency_ms",
+            event.downstream_latency_ms as i64,
+        ));
+    }
+    // Per-attempt telemetry (#655). `request_id` is the trace/group key; a
+    // failover request emits one span per attempt sharing it, ordered by
+    // `sibyl-gateway.attempt_index`. The OTLP encoder is an explicit allowlist, so
+    // these are added here alongside the wire fields.
+    attributes.push(attr_int(
+        "sibyl-gateway.attempt_index",
+        event.attempt_index as i64,
+    ));
+    if !event.attempt_kind.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.attempt_kind",
+            &event.attempt_kind,
+        ));
+    }
+    if !event.attempt_model.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.attempt_model",
+            &event.attempt_model,
+        ));
+    }
+    if !event.error_class.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.error_class", &event.error_class));
+    }
+    if !event.error_message.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.error_message",
+            &event.error_message,
+        ));
+    }
+    // Downstream client attribution (#492). Custom attrs so exporters
+    // can slice by source IP / client type; the OTLP encoder is an
+    // explicit allowlist, so new UsageEvent fields must be added here.
+    if !event.client_source_ip.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.client_source_ip",
+            &event.client_source_ip,
+        ));
+    }
+    if !event.client_user_agent.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.client_user_agent",
+            &event.client_user_agent,
+        ));
+    }
+    // End-user identity a passthrough route's `identity_header` extracted —
+    // the per-employee attribution of the forward-proxy scenario. Not gated
+    // on the protocol so a future handler that learns to populate it exports
+    // it without touching this sink.
+    if !event.client_identity.is_empty() {
+        attributes.push(attr_string_capped(
+            "sibyl-gateway.client_identity",
+            &event.client_identity,
+        ));
+    }
+    // JWT identity attribution (AISIX-Cloud#564): who the request ran as
+    // when it authenticated with a JWT — the identity behind the (possibly
+    // shared) api_key_id.
+    if !event.jwt_subject.is_empty() {
+        attributes.push(attr_string("sibyl-gateway.jwt_subject", &event.jwt_subject));
+    }
+    if !event.jwt_provider.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.jwt_provider",
+            &event.jwt_provider,
+        ));
+    }
+    if !event.jwt_claim_mapping.is_empty() {
+        attributes.push(attr_string(
+            "sibyl-gateway.jwt_claim_mapping",
+            &event.jwt_claim_mapping,
+        ));
+    }
+    // Gateway-protocol attribution. An A2A or MCP call is not a model
+    // inference, and encoding one as a bare `chat` span left every agent and
+    // tool call in a trace backend indistinguishable from an LLM request —
+    // with the agent, the method and the task it touched recorded nowhere at
+    // all (AISIX-Cloud#1215).
+    match event.inbound_protocol.as_str() {
+        "a2a" => {
+            if !event.a2a_agent_name.is_empty() {
+                attributes.push(attr_string("gen_ai.agent.name", &event.a2a_agent_name));
+            }
+            // An A2A context ties a multi-turn exchange's tasks together —
+            // exactly what semconv means by a conversation id.
+            if !event.a2a_context_id.is_empty() {
+                attributes.push(attr_string_capped(
+                    "gen_ai.conversation.id",
+                    &event.a2a_context_id,
+                ));
+            }
+            for (key, value) in [
+                ("sibyl-gateway.a2a.method", &event.a2a_method),
+                ("sibyl-gateway.a2a.operation", &event.a2a_operation),
+                (
+                    "sibyl-gateway.a2a.protocol_version",
+                    &event.a2a_protocol_version,
+                ),
+                ("sibyl-gateway.a2a.task_id", &event.a2a_task_id),
+                ("sibyl-gateway.a2a.task_state", &event.a2a_task_state),
+            ] {
+                if !value.is_empty() {
+                    attributes.push(attr_string_capped(key, value));
+                }
+            }
+            if event.a2a_stream_event_count > 0 {
+                attributes.push(attr_int(
+                    "sibyl-gateway.a2a.stream_event_count",
+                    i64::from(event.a2a_stream_event_count),
+                ));
+            }
+        }
+        "mcp" => {
+            if !event.mcp_tool_name.is_empty() {
+                attributes.push(attr_string_capped("gen_ai.tool.name", &event.mcp_tool_name));
+            }
+            if !event.mcp_server_name.is_empty() {
+                attributes.push(attr_string(
+                    "sibyl-gateway.mcp.server_name",
+                    &event.mcp_server_name,
+                ));
+            }
+        }
+        "passthrough" => {
+            if !event.passthrough_route_name.is_empty() {
+                attributes.push(attr_string(
+                    "sibyl-gateway.passthrough.route_name",
+                    &event.passthrough_route_name,
+                ));
+            }
+        }
+        _ => {}
+    }
+    // Opt-in captured content (#519 B.2) — present ONLY on a record built by
+    // [`content_record`] for a `content_mode = full` exporter. Keys match the
+    // Datadog sink's flattened content fields, so one query vocabulary works
+    // across both backends.
+    if let Some(content) = &record.content {
+        attributes.push(attr_string("gen_ai.prompt", &content.prompt));
+        attributes.push(attr_string("gen_ai.completion", &content.response));
+        if content.truncated {
+            attributes.push(attr_bool("sibyl-gateway.content_truncated", true));
+        }
+    }
+
+    attributes
+}
+
+/// The OpenTelemetry GenAI operation this event describes.
+///
+/// The gateway fronts three kinds of upstream, and only one of them is a model
+/// inference. `invoke_agent` and `execute_tool` are the semconv's own
+/// well-known values for the other two, so an A2A or MCP span lands in the
+/// same bucket a trace backend already understands.
+fn operation_name(event: &UsageEvent) -> &'static str {
+    match event.inbound_protocol.as_str() {
+        "a2a" => "invoke_agent",
+        "mcp" => "execute_tool",
+        "passthrough" => "passthrough",
+        _ => "chat",
+    }
+}
+
+/// Longest target this will append to a span name.
+///
+/// An A2A agent name is a registered resource, but an MCP tool name is the
+/// caller's own `tools/call` `params.name` and is recorded before the tool is
+/// known to exist — including on the quota-rejection path, which emits without
+/// ever contacting an upstream. A trace backend indexes span names and most
+/// derive RED metrics from them, so the one field a caller picks freely is
+/// bounded before it gets there.
+const MAX_SPAN_NAME_TARGET: usize = 64;
+
+/// The span's name: `{operation} {target}` where the target is low-cardinality
+/// and known, per the semconv's naming rule for agent and tool spans. LLM
+/// traffic keeps the name it has always had.
+///
+/// A target that is absent or outside [`MAX_SPAN_NAME_TARGET`] leaves the bare
+/// operation, which the conventions name as the fallback for exactly this
+/// case. The raw value is still on the span as an attribute either way.
+fn span_name(event: &UsageEvent) -> String {
+    let operation = operation_name(event);
+    let target = match event.inbound_protocol.as_str() {
+        "a2a" => &event.a2a_agent_name,
+        "mcp" => &event.mcp_tool_name,
+        // A route name is a registered resource like an agent name, so it is
+        // operator-bounded — but it still passes the length cap below.
+        "passthrough" => &event.passthrough_route_name,
+        _ => return "chat.completions".to_string(),
+    };
+    if target.is_empty() || target.len() > MAX_SPAN_NAME_TARGET {
+        operation.to_string()
+    } else {
+        format!("{operation} {target}")
+    }
+}
+
+/// Wrap one or more spans into an OTLP/HTTP-JSON `ExportTraceServiceRequest`.
+fn otlp_export_request(spans: Vec<Value>) -> Value {
+    json!({
+        "resourceSpans": [{
+            "resource": {
+                "attributes": [
+                    attr_string("service.name", "sibyl-gateway-dp"),
+                ],
+            },
+            "scopeSpans": [{
+                "scope": { "name": "sibyl-gateway-obs.otlp_http_sink" },
+                "spans": spans,
+            }],
+        }],
+    })
+}
+
+/// One event -> one-span export request over a metadata-only record (the
+/// default shape). Test-only helper for the payload assertions; production
+/// paths build spans via [`build_otlp_span`] and batch them through
+/// [`otlp_export_request`] inside [`OtlpSink`].
+#[cfg(test)]
+fn build_otlp_traces_payload(event: &UsageEvent, exporter_name: &str) -> Value {
+    let record = SinkRecord::metadata_only(event.clone());
+    otlp_export_request(vec![build_otlp_span(&record, exporter_name)])
+}
+
+fn attr_string(key: &str, value: &str) -> Value {
+    json!({
+        "key": key,
+        "value": { "stringValue": value },
+    })
+}
+
+/// Longest caller-supplied attribute value carried on a span.
+///
+/// The gateway-protocol attributes below are copied from the caller's own
+/// JSON-RPC envelope (the method it invoked, the ids it named), and the
+/// request body limit defaults to unlimited, so their length is the caller's
+/// choice. Every span rides in a batched export, so an unbounded value is a
+/// delivery problem as much as a storage one.
+const MAX_PROTOCOL_ATTR_BYTES: usize = 256;
+
+/// [`attr_string`] for a value a caller controls, cut to
+/// [`MAX_PROTOCOL_ATTR_BYTES`] on a UTF-8 boundary.
+fn attr_string_capped(key: &str, value: &str) -> Value {
+    let mut end = MAX_PROTOCOL_ATTR_BYTES.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    attr_string(key, &value[..end])
+}
+
+fn attr_int(key: &str, value: i64) -> Value {
+    json!({
+        "key": key,
+        // OTLP/JSON encodes int as a string to avoid JS Number precision loss.
+        "value": { "intValue": value.to_string() },
+    })
+}
+
+fn attr_double(key: &str, value: f64) -> Value {
+    json!({
+        "key": key,
+        "value": { "doubleValue": value },
+    })
+}
+
+fn attr_bool(key: &str, value: bool) -> Value {
+    json!({
+        "key": key,
+        "value": { "boolValue": value },
+    })
+}
+
+fn attr_string_array(key: &str, values: &[String]) -> Value {
+    let arr: Vec<Value> = values.iter().map(|v| json!({"stringValue": v})).collect();
+    json!({
+        "key": key,
+        "value": { "arrayValue": { "values": arr } },
+    })
+}
+
+/// 16 random bytes as 32 lowercase-hex chars per OTLP/JSON spec.
+fn random_trace_id() -> String {
+    let bytes: [u8; 16] = rand_16();
+    hex32(&bytes)
+}
+
+/// 8 random bytes as 16 lowercase-hex chars per OTLP/JSON spec.
+fn random_span_id() -> String {
+    let bytes: [u8; 8] = rand_8();
+    hex16(&bytes)
+}
+
+fn rand_16() -> [u8; 16] {
+    let u = uuid::Uuid::new_v4();
+    *u.as_bytes()
+}
+
+fn rand_8() -> [u8; 8] {
+    let u = uuid::Uuid::new_v4();
+    let b = u.as_bytes();
+    [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]
+}
+
+fn hex32(bytes: &[u8; 16]) -> String {
+    let mut s = String::with_capacity(32);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+fn hex16(bytes: &[u8; 8]) -> String {
+    let mut s = String::with_capacity(16);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+fn parse_rfc3339_to_unix_nano(s: &str) -> Option<u128> {
+    // Use chrono if available, fall back to naive epoch parsing.
+    // We avoid pulling chrono into this crate by hand-parsing the
+    // common DP-emitted RFC3339 form: `2006-01-02T15:04:05Z` or with
+    // fractional seconds `.<digits>`.
+    let dt = chrono_like_parse(s)?;
+    let secs = dt.0 as u128;
+    let nanos = dt.1 as u128;
+    secs.checked_mul(1_000_000_000)
+        .and_then(|n| n.checked_add(nanos))
+}
+
+/// Returns (unix_secs, sub_seconds_in_nanos) on success.
+fn chrono_like_parse(s: &str) -> Option<(i64, u32)> {
+    // Cheap-and-cheerful: split on the 'T', the seconds field, and 'Z'.
+    // Wrong handling of timezone offsets — but the DP serialises UTC
+    // with a 'Z' suffix everywhere, so this is sufficient for our
+    // own emit shape.
+    let s = s.strip_suffix('Z')?;
+    let (date, time) = s.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let y: i32 = date_parts.next()?.parse().ok()?;
+    let mo: u32 = date_parts.next()?.parse().ok()?;
+    let d: u32 = date_parts.next()?.parse().ok()?;
+
+    let (h_m_s, frac_str) = match time.split_once('.') {
+        Some((a, b)) => (a, b),
+        None => (time, "0"),
+    };
+    let mut t_parts = h_m_s.split(':');
+    let h: u32 = t_parts.next()?.parse().ok()?;
+    let mi: u32 = t_parts.next()?.parse().ok()?;
+    let se: u32 = t_parts.next()?.parse().ok()?;
+
+    let secs = days_from_civil(y, mo, d).checked_mul(86_400)?
+        + (h as i64) * 3600
+        + (mi as i64) * 60
+        + se as i64;
+
+    // Truncate to 9 fractional digits.
+    let frac_padded: String = frac_str
+        .chars()
+        .chain(std::iter::repeat('0'))
+        .take(9)
+        .collect();
+    let nanos: u32 = frac_padded.parse().ok()?;
+
+    Some((secs, nanos))
+}
+
+/// Howard Hinnant's `days_from_civil` (https://howardhinnant.github.io/date_algorithms.html).
+/// Avoids depending on chrono just for the e2e build.
+fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let doy = (153 * if m > 2 { m - 3 } else { m + 9 } + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era as i64) * 146_097 + doe as i64 - 719_468
+}
+
+fn now_unix_nano() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+#[allow(dead_code)]
+fn _ensure_arc_clone(_: Arc<()>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_event() -> UsageEvent {
+        UsageEvent {
+            request_id: "req-test-123".into(),
+            occurred_at: "2026-05-01T12:00:00Z".into(),
+            model_id: "mod-uuid".into(),
+            api_key_id: "ak-uuid".into(),
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            upstream_latency_ms: 250,
+            status_code: 200,
+            provider_request_id: "chatcmpl-abc".into(),
+            provider_model_version: "gpt-4o-2024-08-06".into(),
+            finish_reason: "stop".into(),
+            cost_usd: 0.001,
+            operation: "image_generation".into(),
+            ..Default::default()
+        }
+    }
+
+    fn sample_exporter() -> ObservabilityExporter {
+        // Round-trip through serde so the runtime_id (private) gets
+        // populated by the loader path, just like in production. Kept
+        // off the public API on purpose — callers must go through
+        // the loader, not poke the field directly.
+        serde_json::from_value(serde_json::json!({
+            "name": "test-exp",
+            "enabled": true,
+            "kind": "otlp_http",
+            "endpoint": "http://mock-otlp:4318/v1/traces",
+            "headers": {"authorization": "Bearer xyz"}
+        }))
+        .unwrap()
+    }
+
+    fn sls_kind(content_mode: SlsContentMode, max_bytes: u32) -> ExporterKind {
+        ExporterKind::AliyunSls(AliyunSlsConfig {
+            endpoint: "ap-southeast-3.log.aliyuncs.com".into(),
+            project: "p".into(),
+            logstore: "l".into(),
+            credential_ref: "r".into(),
+            content_mode,
+            content_max_bytes: max_bytes,
+        })
+    }
+
+    /// A three-attempt failover bundle with a remote parent, for the
+    /// hierarchy-encoding assertions (AISIX-Cloud#1279).
+    fn hierarchy_record() -> SinkRecord {
+        let (trace_id, parent_span_id, flags) = crate::trace::parse_traceparent(
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+        .unwrap();
+        let bundle =
+            crate::trace::RequestTraceBundle::new(Some(crate::trace::RemoteTraceContext {
+                trace_id,
+                parent_span_id,
+                flags,
+                tracestate: Some("vendor=x".into()),
+            }));
+        bundle.start_attempt(0);
+        bundle.end_attempt(0);
+        bundle.start_attempt(1);
+        bundle.end_attempt(1);
+        let mut event = sample_event();
+        event.attempt_index = 1;
+        SinkRecord::metadata_only(event).with_trace(Some(bundle.emission(true, 1, 250, true)))
+    }
+
+    /// The hierarchy contract (AISIX-Cloud#1279): a terminal record with a
+    /// remote parent encodes SERVER (kind 2, parented to the inbound
+    /// traceparent, carrying traceState) → logical CLIENT → attempt
+    /// CLIENT, all under the caller's trace id, with the event's full
+    /// attribute set on the attempt span only.
+    #[test]
+    fn hierarchy_record_encodes_server_logical_attempt_spans() {
+        let record = hierarchy_record();
+        let spans = build_otlp_spans(&record, "exp-1");
+        assert_eq!(spans.len(), 3);
+
+        for span in &spans {
+            assert_eq!(span["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        }
+        let server = &spans[0];
+        let logical = &spans[1];
+        let attempt = &spans[2];
+        assert_eq!(server["kind"], 2);
+        assert_eq!(server["parentSpanId"], "00f067aa0ba902b7");
+        assert_eq!(server["traceState"], "vendor=x");
+        // SAMPLED | HAS_IS_REMOTE | IS_REMOTE.
+        assert_eq!(server["flags"], 0x301);
+
+        assert_eq!(logical["kind"], 3);
+        assert_eq!(logical["parentSpanId"], server["spanId"]);
+        assert_eq!(logical["flags"], 0x101);
+        assert!(logical.get("traceState").is_none());
+
+        assert_eq!(attempt["kind"], 3);
+        assert_eq!(attempt["parentSpanId"], logical["spanId"]);
+
+        // The event's full attribute set rides the attempt span; the
+        // structural spans carry only the joining keys.
+        let keys = |span: &Value| -> Vec<String> {
+            span["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["key"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(keys(attempt).contains(&"gen_ai.response.id".to_string()));
+        assert!(!keys(server).contains(&"gen_ai.response.id".to_string()));
+        assert!(keys(server).contains(&"sibyl-gateway.request_id".to_string()));
+        // The request's kind is one of the joining keys, on every level:
+        // a trace backend filters a whole trace by it at the SERVER root,
+        // which reading it off the attempt span alone would not allow
+        // (AISIX-Cloud#1461).
+        let operation_of = |span: &Value| -> String {
+            span["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["key"] == "sibyl-gateway.operation")
+                .expect("sibyl-gateway.operation must be present")["value"]["stringValue"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        for span in [server, logical, attempt] {
+            assert_eq!(operation_of(span), "image_generation");
+        }
+
+        // Timestamps bracket: server ⊇ logical ⊇ attempt.
+        let nanos =
+            |span: &Value, key: &str| -> u128 { span[key].as_str().unwrap().parse().unwrap() };
+        assert!(nanos(server, "startTimeUnixNano") <= nanos(logical, "startTimeUnixNano"));
+        assert!(nanos(logical, "endTimeUnixNano") <= nanos(server, "endTimeUnixNano"));
+        assert!(nanos(logical, "startTimeUnixNano") <= nanos(attempt, "startTimeUnixNano"));
+        assert!(nanos(attempt, "endTimeUnixNano") <= nanos(logical, "endTimeUnixNano"));
+    }
+
+    /// The regenerate-per-retry defect this PR removes: encoding the same
+    /// record twice — what the delivery retry loop does — must produce
+    /// byte-identical ids and timestamps.
+    #[test]
+    fn re_encoding_a_trace_record_is_byte_identical() {
+        let record = hierarchy_record();
+        let a = build_otlp_spans(&record, "exp-1");
+        let b = build_otlp_spans(&record, "exp-1");
+        assert_eq!(a, b);
+    }
+
+    /// A record without a trace snapshot (a synthetic event, or a caller
+    /// predating the bundle) keeps the legacy single-span shape.
+    #[test]
+    fn traceless_record_falls_back_to_the_legacy_single_span() {
+        let record = SinkRecord::metadata_only(sample_event());
+        let spans = build_otlp_spans(&record, "exp-1");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0]["kind"], 3);
+        assert!(spans[0].get("parentSpanId").is_none());
+    }
+
+    fn otlp_kind(content_mode: SlsContentMode, max_bytes: u32) -> ExporterKind {
+        ExporterKind::OtlpHttp(OtlpHttpConfig {
+            endpoint: "https://x/v1/traces".into(),
+            headers: Default::default(),
+            sample_rate: None,
+            content_mode,
+            content_max_bytes: max_bytes,
+        })
+    }
+
+    fn datadog_kind(content_mode: SlsContentMode, max_bytes: u32) -> ExporterKind {
+        ExporterKind::Datadog(DatadogConfig {
+            site: "datadoghq.com".into(),
+            credential_ref: "r".into(),
+            service: "ai-gateway".into(),
+            ddsource: "sibyl-gateway-ai-gateway".into(),
+            tags: vec![],
+            content_mode,
+            content_max_bytes: max_bytes,
+        })
+    }
+
+    #[test]
+    fn content_record_targets_only_full_capture_sls() {
+        let event = sample_event();
+        let captured = CapturedContent {
+            prompt: "the prompt".into(),
+            response: "the response".into(),
+            truncated: false,
+        };
+
+        // otlp on its default (metadata_only) never carries content, even
+        // when content was captured.
+        let otlp = otlp_kind(SlsContentMode::MetadataOnly, 1024);
+        assert!(content_record(&otlp, &event, Some(&captured), None).is_none());
+
+        // object_store never carries content either — content_record gates on
+        // the AliyunSls variant, so any other kind gets metadata-only even when
+        // content was captured (no prompt/response leak into S3 / GCS / Azure).
+        let objstore = serde_json::from_value::<ObservabilityExporter>(serde_json::json!({
+            "name": "o",
+            "enabled": true,
+            "kind": "object_store",
+            "provider": "s3",
+            "bucket": "b",
+            "prefix": "p",
+            "credential_ref": "r"
+        }))
+        .unwrap()
+        .kind;
+        assert!(content_record(&objstore, &event, Some(&captured), None).is_none());
+
+        // sls metadata_only → no content.
+        let meta = sls_kind(SlsContentMode::MetadataOnly, 1024);
+        assert!(content_record(&meta, &event, Some(&captured), None).is_none());
+
+        // sls full but nothing captured → falls back to metadata.
+        let full = sls_kind(SlsContentMode::Full, 1024);
+        assert!(content_record(&full, &event, None, None).is_none());
+
+        // sls full + captured content → a content-bearing record that still
+        // carries the metadata.
+        let rec = content_record(&full, &event, Some(&captured), None)
+            .expect("full-capture sls with content yields a content record");
+        let c = rec.content.as_ref().expect("content attached");
+        assert_eq!(c.prompt, "the prompt");
+        assert_eq!(c.response, "the response");
+        assert!(!c.truncated);
+        assert_eq!(rec.usage.request_id, "req-test-123");
+
+        // Per-exporter cap truncates + flags.
+        let big = CapturedContent {
+            prompt: "a".repeat(500),
+            response: "ok".into(),
+            truncated: false,
+        };
+        let rec = content_record(
+            &sls_kind(SlsContentMode::Full, 16),
+            &event,
+            Some(&big),
+            None,
+        )
+        .unwrap();
+        let c = rec.content.as_ref().unwrap();
+        assert_eq!(c.prompt.len(), 16);
+        assert!(c.truncated, "oversize content must flag truncated");
+
+        // Handler-side truncation propagates even when the per-exporter cap
+        // did not cut.
+        let pre = CapturedContent {
+            prompt: "short".into(),
+            response: "short".into(),
+            truncated: true,
+        };
+        let rec = content_record(&full, &event, Some(&pre), None).unwrap();
+        assert!(
+            rec.content.as_ref().unwrap().truncated,
+            "source truncation must propagate"
+        );
+
+        // datadog behaves identically to sls: metadata_only → no content,
+        // full + captured content → a content-bearing record (same shared
+        // `SlsContentMode` plumbing).
+        let dd_meta = datadog_kind(SlsContentMode::MetadataOnly, 1024);
+        assert!(content_record(&dd_meta, &event, Some(&captured), None).is_none());
+        let dd_full = datadog_kind(SlsContentMode::Full, 1024);
+        assert!(content_record(&dd_full, &event, None, None).is_none());
+        let rec = content_record(&dd_full, &event, Some(&captured), None)
+            .expect("full-capture datadog with content yields a content record");
+        let c = rec.content.as_ref().expect("content attached");
+        assert_eq!(c.prompt, "the prompt");
+        assert_eq!(c.response, "the response");
+        // Per-exporter cap truncates a datadog record too.
+        let rec = content_record(
+            &datadog_kind(SlsContentMode::Full, 16),
+            &event,
+            Some(&big),
+            None,
+        )
+        .unwrap();
+        assert_eq!(rec.content.as_ref().unwrap().prompt.len(), 16);
+        assert!(rec.content.as_ref().unwrap().truncated);
+
+        // otlp_http behaves identically (#519 B.2): full + captured content →
+        // a content-bearing record; full with nothing captured → metadata.
+        let otlp_full = otlp_kind(SlsContentMode::Full, 1024);
+        assert!(content_record(&otlp_full, &event, None, None).is_none());
+        let rec = content_record(&otlp_full, &event, Some(&captured), None)
+            .expect("full-capture otlp with content yields a content record");
+        let c = rec.content.as_ref().expect("content attached");
+        assert_eq!(c.prompt, "the prompt");
+        assert_eq!(c.response, "the response");
+        // Per-exporter cap truncates an otlp record too.
+        let rec = content_record(
+            &otlp_kind(SlsContentMode::Full, 16),
+            &event,
+            Some(&big),
+            None,
+        )
+        .unwrap();
+        assert_eq!(rec.content.as_ref().unwrap().prompt.len(), 16);
+        assert!(rec.content.as_ref().unwrap().truncated);
+    }
+
+    #[test]
+    fn span_carries_content_attrs_only_for_content_bearing_records() {
+        let event = sample_event();
+
+        // Metadata-only record (the default): no content keys on the span.
+        let meta = SinkRecord::metadata_only(event.clone());
+        let span = build_otlp_span(&meta, "x");
+        let keys: Vec<&str> = span["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["key"].as_str().unwrap())
+            .collect();
+        assert!(!keys.contains(&"gen_ai.prompt"));
+        assert!(!keys.contains(&"gen_ai.completion"));
+        assert!(!keys.contains(&"sibyl-gateway.content_truncated"));
+
+        // Content-bearing record (content_mode = full): prompt + completion
+        // ride the span under the Datadog sink's key names.
+        let captured = CapturedContent {
+            prompt: "what is 2+2?".into(),
+            response: "4".into(),
+            truncated: false,
+        };
+        let rec = content_record(
+            &otlp_kind(SlsContentMode::Full, 1024),
+            &event,
+            Some(&captured),
+            None,
+        )
+        .unwrap();
+        let span = build_otlp_span(&rec, "x");
+        let attrs = span["attributes"].as_array().unwrap();
+        let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
+        assert_eq!(
+            find("gen_ai.prompt").expect("prompt attr")["value"]["stringValue"],
+            "what is 2+2?"
+        );
+        assert_eq!(
+            find("gen_ai.completion").expect("completion attr")["value"]["stringValue"],
+            "4"
+        );
+        // Nothing was truncated → no flag.
+        assert!(find("sibyl-gateway.content_truncated").is_none());
+
+        // Truncation (here: per-exporter cap cut the prompt) flags the span.
+        let big = CapturedContent {
+            prompt: "a".repeat(500),
+            response: "ok".into(),
+            truncated: false,
+        };
+        let rec = content_record(
+            &otlp_kind(SlsContentMode::Full, 16),
+            &event,
+            Some(&big),
+            None,
+        )
+        .unwrap();
+        let span = build_otlp_span(&rec, "x");
+        let attrs = span["attributes"].as_array().unwrap();
+        let flag = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.content_truncated")
+            .expect("truncated flag");
+        assert_eq!(flag["value"]["boolValue"], true);
+    }
+
+    #[test]
+    fn sampling_extremes_drop_all_or_keep_all() {
+        let ids: Vec<String> = (0..1000).map(|i| format!("req-{i}")).collect();
+        for id in &ids {
+            // Absent (None) = 1.0 = the pre-knob behaviour: keep everything.
+            assert!(otlp_should_sample(None, id));
+            assert!(otlp_should_sample(Some(1.0), id));
+            // 0.0 drops everything.
+            assert!(!otlp_should_sample(Some(0.0), id));
+        }
+    }
+
+    #[test]
+    fn sampling_is_deterministic_and_roughly_proportional() {
+        // Same id → same decision, every time (the all-or-nothing guarantee
+        // for a request's per-attempt spans, which share request_id).
+        for id in ["req-a", "req-b", "req-c"] {
+            let first = otlp_should_sample(Some(0.5), id);
+            for _ in 0..10 {
+                assert_eq!(otlp_should_sample(Some(0.5), id), first);
+            }
+        }
+
+        // Across many distinct ids the kept fraction tracks the rate. The
+        // per-process salt makes the exact count vary between runs, so the
+        // band is wide: at n=1000, p=0.5 the standard deviation is ~16, and
+        // ±150 is over nine of them.
+        let kept = (0..1000)
+            .filter(|i| otlp_should_sample(Some(0.5), &format!("req-{i}")))
+            .count();
+        assert!(
+            (350..=650).contains(&kept),
+            "rate 0.5 kept {kept}/1000 — hash badly skewed"
+        );
+    }
+
+    // AISIX-Cloud#1288: the request id is caller-supplied, so the sampling
+    // bucket must not be a pure function of it. Without the salt a caller can
+    // grind ids offline until one falls outside a sampled exporter's bucket
+    // and never appear in a trace again.
+    #[test]
+    fn sampling_bucket_is_not_predictable_from_the_request_id_alone() {
+        // The unsalted hash is what an attacker can compute off the wire.
+        // Over many ids it must disagree with the real decision often enough
+        // that precomputing an evasive id is not possible.
+        let disagreements = (0..1000)
+            .filter(|i| {
+                let id = format!("req-{i}");
+                let unsalted = fnv1a_64(id.as_bytes()) % SAMPLE_PRECISION
+                    < (0.5 * SAMPLE_PRECISION as f64) as u64;
+                unsalted != otlp_should_sample(Some(0.5), &id)
+            })
+            .count();
+        assert!(
+            disagreements > 100,
+            "only {disagreements}/1000 ids differ from the unsalted bucket — \
+             the salt is not reaching the hash"
+        );
+    }
+
+    #[test]
+    fn fingerprint_otlp_covers_the_new_knobs() {
+        let base = OtlpHttpConfig {
+            endpoint: "https://x/v1/traces".into(),
+            headers: Default::default(),
+            sample_rate: None,
+            content_mode: SlsContentMode::MetadataOnly,
+            content_max_bytes: 128 * 1024,
+        };
+        assert_eq!(
+            fingerprint_otlp(&base),
+            fingerprint_otlp(&base.clone()),
+            "same config must fingerprint identically"
+        );
+
+        // Each knob edit must rebuild the pipeline (#519 B.2).
+        let mut sampled = base.clone();
+        sampled.sample_rate = Some(0.5);
+        assert_ne!(fingerprint_otlp(&base), fingerprint_otlp(&sampled));
+
+        let mut full = base.clone();
+        full.content_mode = SlsContentMode::Full;
+        assert_ne!(fingerprint_otlp(&base), fingerprint_otlp(&full));
+
+        let mut capped = base.clone();
+        capped.content_max_bytes = 4096;
+        assert_ne!(fingerprint_otlp(&base), fingerprint_otlp(&capped));
+
+        let mut moved = base.clone();
+        moved.endpoint = "https://y/v1/traces".into();
+        assert_ne!(fingerprint_otlp(&base), fingerprint_otlp(&moved));
+    }
+
+    #[test]
+    fn content_capture_cap_picks_max_enabled_full_sls() {
+        fn sls(name: &str, enabled: bool, mode: &str, max: u32) -> ObservabilityExporter {
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "enabled": enabled,
+                "kind": "aliyun_sls",
+                "endpoint": "ap-southeast-3.log.aliyuncs.com",
+                "project": "p",
+                "logstore": "l",
+                "credential_ref": "r",
+                "content_mode": mode,
+                "content_max_bytes": max,
+            }))
+            .unwrap()
+        }
+
+        // No exporter wants content → None (handler skips capture).
+        let otlp = sample_exporter();
+        let meta = sls("a", true, "metadata_only", 1024);
+        assert_eq!(content_capture_cap([&otlp, &meta]), None);
+
+        // One full-capture sls → its cap.
+        let full = sls("a", true, "full", 4096);
+        assert_eq!(content_capture_cap([&full]), Some(4096));
+
+        // Max across several full-capture exporters.
+        let full_b = sls("b", true, "full", 8192);
+        assert_eq!(content_capture_cap([&full, &full_b]), Some(8192));
+
+        // A disabled full-capture exporter is ignored.
+        let disabled = sls("a", false, "full", 4096);
+        assert_eq!(content_capture_cap([&disabled]), None);
+
+        // A full-capture datadog exporter counts toward the cap too, and the
+        // max is taken across both kinds.
+        fn datadog(name: &str, enabled: bool, mode: &str, max: u32) -> ObservabilityExporter {
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "enabled": enabled,
+                "kind": "datadog",
+                "site": "datadoghq.com",
+                "credential_ref": "r",
+                "service": "ai-gateway",
+                "content_mode": mode,
+                "content_max_bytes": max,
+            }))
+            .unwrap()
+        }
+        let dd_full = datadog("dd", true, "full", 16384);
+        assert_eq!(content_capture_cap([&dd_full]), Some(16384));
+        assert_eq!(content_capture_cap([&full, &dd_full]), Some(16384));
+        let dd_meta = datadog("dd", true, "metadata_only", 4096);
+        assert_eq!(content_capture_cap([&dd_meta]), None);
+
+        // A full-capture otlp_http exporter counts toward the cap too
+        // (#519 B.2); a metadata-only one (the default) does not — the
+        // `sample_exporter()` fixture above already proved the default shape
+        // yields None.
+        fn otlp_exp(name: &str, mode: &str, max: u32) -> ObservabilityExporter {
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "enabled": true,
+                "kind": "otlp_http",
+                "endpoint": "https://x/v1/traces",
+                "content_mode": mode,
+                "content_max_bytes": max,
+            }))
+            .unwrap()
+        }
+        let otlp_full = otlp_exp("ot", "full", 32768);
+        assert_eq!(content_capture_cap([&otlp_full]), Some(32768));
+        assert_eq!(content_capture_cap([&dd_full, &otlp_full]), Some(32768));
+        assert_eq!(
+            content_capture_cap([&otlp_exp("ot", "metadata_only", 4096)]),
+            None
+        );
+    }
+
+    #[test]
+    fn payload_carries_genai_semconv_attributes() {
+        let body = build_otlp_traces_payload(&sample_event(), "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["name"], "chat.completions");
+        assert_eq!(span["status"]["code"], 1);
+        // Attribute set must include the GenAI required + recommended fields
+        // we promised the user.
+        let attrs = span["attributes"].as_array().unwrap();
+        let keys: Vec<&str> = attrs.iter().map(|a| a["key"].as_str().unwrap()).collect();
+        assert!(keys.contains(&"gen_ai.system"));
+        assert!(keys.contains(&"gen_ai.operation.name"));
+        // The semconv value collapses every OpenAI-shaped route onto `chat`;
+        // this is the one that says which endpoint (AISIX-Cloud#1461), so the
+        // VALUE is what has to be checked — the key alone would be satisfied
+        // by an empty attribute.
+        let operation = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.operation")
+            .expect("sibyl-gateway.operation must be present");
+        assert_eq!(operation["value"]["stringValue"], "image_generation");
+        assert!(keys.contains(&"gen_ai.response.model"));
+        assert!(keys.contains(&"gen_ai.response.id"));
+        assert!(keys.contains(&"gen_ai.usage.input_tokens"));
+        assert!(keys.contains(&"gen_ai.usage.output_tokens"));
+        assert!(keys.contains(&"gen_ai.response.finish_reasons"));
+        assert!(keys.contains(&"http.response.status_code"));
+        assert!(keys.contains(&"sibyl-gateway.api_key_id"));
+        assert!(keys.contains(&"sibyl-gateway.model_id"));
+        assert!(keys.contains(&"sibyl-gateway.exporter_name"));
+        assert!(keys.contains(&"sibyl-gateway.request_id"));
+    }
+
+    #[test]
+    fn an_a2a_call_exports_as_an_agent_span_not_a_chat_one() {
+        // Every gateway-protocol event used to be encoded as `chat` /
+        // `chat.completions`, so an agent call was indistinguishable from a
+        // model inference in a trace backend and the agent, method and task it
+        // touched appeared nowhere (AISIX-Cloud#1215).
+        let mut ev = sample_event();
+        ev.inbound_protocol = "a2a".into();
+        ev.a2a_agent_name = "invoice-processor".into();
+        ev.a2a_method = "SendStreamingMessage".into();
+        ev.a2a_operation = "message/stream".into();
+        ev.a2a_protocol_version = "1.0".into();
+        ev.a2a_task_id = "task-9".into();
+        ev.a2a_context_id = "ctx-4".into();
+        ev.a2a_task_state = "working".into();
+
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["name"], "invoke_agent invoice-processor");
+        let attrs = span["attributes"].as_array().unwrap();
+        let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
+        let string_at = |k: &str| find(k).unwrap()["value"]["stringValue"].clone();
+        assert_eq!(string_at("gen_ai.operation.name"), "invoke_agent");
+        assert_eq!(string_at("gen_ai.agent.name"), "invoice-processor");
+        // A2A's context id is semconv's conversation id — the thread a
+        // multi-turn exchange's tasks hang off.
+        assert_eq!(string_at("gen_ai.conversation.id"), "ctx-4");
+        assert_eq!(
+            string_at("sibyl-gateway.a2a.method"),
+            "SendStreamingMessage"
+        );
+        assert_eq!(string_at("sibyl-gateway.a2a.operation"), "message/stream");
+        assert_eq!(string_at("sibyl-gateway.a2a.protocol_version"), "1.0");
+        assert_eq!(string_at("sibyl-gateway.a2a.task_id"), "task-9");
+        assert_eq!(string_at("sibyl-gateway.a2a.task_state"), "working");
+    }
+
+    #[test]
+    fn a_passthrough_relay_exports_route_and_identity_not_a_chat_span() {
+        // The passthrough handler emits usage events with
+        // `inbound_protocol = "passthrough"`; without the explicit branch a
+        // Copilot relay exported as a bare `chat.completions` span with the
+        // route and the device-injected end-user identity recorded nowhere.
+        let mut ev = sample_event();
+        ev.inbound_protocol = "passthrough".into();
+        ev.passthrough_route_name = "copilot-chat".into();
+        ev.client_identity = "alice@example.com".into();
+
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["name"], "passthrough copilot-chat");
+        let attrs = span["attributes"].as_array().unwrap();
+        let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
+        let string_at = |k: &str| find(k).unwrap()["value"]["stringValue"].clone();
+        assert_eq!(string_at("gen_ai.operation.name"), "passthrough");
+        assert_eq!(
+            string_at("sibyl-gateway.passthrough.route_name"),
+            "copilot-chat"
+        );
+        assert_eq!(
+            string_at("sibyl-gateway.client_identity"),
+            "alice@example.com"
+        );
+    }
+
+    #[test]
+    fn client_identity_exports_without_a_protocol_gate() {
+        // The identity attribute must not depend on the passthrough branch:
+        // any handler that populates the field gets it exported.
+        let mut ev = sample_event();
+        ev.client_identity = "bob@example.com".into();
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        let attrs = span["attributes"].as_array().unwrap();
+        let id = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.client_identity")
+            .unwrap();
+        assert_eq!(id["value"]["stringValue"], "bob@example.com");
+    }
+
+    #[test]
+    fn a_streamed_a2a_call_carries_its_event_count() {
+        // A unary call has no count, and exporting a zero would read as "the
+        // stream carried nothing" rather than "there was no stream".
+        let mut streamed = sample_event();
+        streamed.inbound_protocol = "a2a".into();
+        streamed.a2a_agent_name = "invoice-processor".into();
+        streamed.a2a_stream_event_count = 17;
+        let body = build_otlp_traces_payload(&streamed, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            attrs
+                .iter()
+                .find(|a| a["key"] == "sibyl-gateway.a2a.stream_event_count")
+                .unwrap()["value"]["intValue"],
+            "17"
+        );
+
+        let mut unary = sample_event();
+        unary.inbound_protocol = "a2a".into();
+        let body = build_otlp_traces_payload(&unary, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(attrs
+            .iter()
+            .all(|a| a["key"] != "sibyl-gateway.a2a.stream_event_count"));
+    }
+
+    #[test]
+    fn an_mcp_call_exports_as_a_tool_span() {
+        let mut ev = sample_event();
+        ev.inbound_protocol = "mcp".into();
+        ev.mcp_server_name = "github".into();
+        ev.mcp_tool_name = "create_issue".into();
+
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["name"], "execute_tool create_issue");
+        let attrs = span["attributes"].as_array().unwrap();
+        let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
+        assert_eq!(
+            find("gen_ai.operation.name").unwrap()["value"]["stringValue"],
+            "execute_tool"
+        );
+        assert_eq!(
+            find("gen_ai.tool.name").unwrap()["value"]["stringValue"],
+            "create_issue"
+        );
+        assert_eq!(
+            find("sibyl-gateway.mcp.server_name").unwrap()["value"]["stringValue"],
+            "github"
+        );
+    }
+
+    #[test]
+    fn a_caller_chosen_target_cannot_grow_the_span_name() {
+        // An MCP tool name is the caller's own `tools/call` `params.name`,
+        // recorded before the tool is known to exist, and the request body
+        // limit defaults to unlimited. A trace backend indexes span names, so
+        // an oversized one falls back to the bare operation and travels as an
+        // attribute instead — itself cut to a fixed cap.
+        let mut ev = sample_event();
+        ev.inbound_protocol = "mcp".into();
+        ev.mcp_tool_name = "t".repeat(4096);
+
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["name"], "execute_tool");
+        let attrs = span["attributes"].as_array().unwrap();
+        let tool = attrs
+            .iter()
+            .find(|a| a["key"] == "gen_ai.tool.name")
+            .unwrap()["value"]["stringValue"]
+            .as_str()
+            .unwrap();
+        assert_eq!(tool.len(), MAX_PROTOCOL_ATTR_BYTES);
+    }
+
+    #[test]
+    fn a_capped_attribute_is_cut_on_a_char_boundary() {
+        // A multi-byte character straddling the cap must not produce invalid
+        // UTF-8 in the export body.
+        let mut ev = sample_event();
+        ev.inbound_protocol = "a2a".into();
+        ev.a2a_method = "情".repeat(200);
+
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let method = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.a2a.method")
+            .unwrap()["value"]["stringValue"]
+            .as_str()
+            .unwrap();
+        assert!(method.len() <= MAX_PROTOCOL_ATTR_BYTES);
+        assert!(method.chars().all(|c| c == '情'));
+    }
+
+    #[test]
+    fn a_gateway_protocol_span_without_a_target_keeps_a_bare_name() {
+        // A pre-dispatch rejection resolves no agent, so there is no
+        // low-cardinality target to append — semconv says name the span after
+        // the operation alone rather than inventing one.
+        let mut ev = sample_event();
+        ev.inbound_protocol = "a2a".into();
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        assert_eq!(
+            body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["name"],
+            "invoke_agent"
+        );
+    }
+
+    #[test]
+    fn llm_traffic_keeps_its_chat_span_shape() {
+        // The protocol switch must not move LLM spans: dashboards and saved
+        // trace queries are written against these two values.
+        for protocol in ["", "openai", "anthropic"] {
+            let mut ev = sample_event();
+            ev.inbound_protocol = protocol.into();
+            let body = build_otlp_traces_payload(&ev, "test-exp");
+            let span = &body["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+            assert_eq!(span["name"], "chat.completions", "protocol={protocol:?}");
+            let attrs = span["attributes"].as_array().unwrap();
+            assert_eq!(
+                attrs
+                    .iter()
+                    .find(|a| a["key"] == "gen_ai.operation.name")
+                    .unwrap()["value"]["stringValue"],
+                "chat"
+            );
+        }
+    }
+
+    #[test]
+    fn payload_carries_per_attempt_attributes() {
+        // A failed fallback attempt (#655): zero tokens, error info, target.
+        let mut ev = sample_event();
+        ev.attempt_index = 1;
+        ev.attempt_kind = "fallback".into();
+        ev.attempt_model = "secondary".into();
+        ev.error_class = "upstream_status".into();
+        ev.error_message = "upstream returned 502".into();
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let find = |k: &str| attrs.iter().find(|a| a["key"] == k);
+        assert_eq!(
+            find("sibyl-gateway.attempt_index").unwrap()["value"]["intValue"],
+            "1"
+        );
+        assert_eq!(
+            find("sibyl-gateway.attempt_kind").unwrap()["value"]["stringValue"],
+            "fallback"
+        );
+        assert_eq!(
+            find("sibyl-gateway.attempt_model").unwrap()["value"]["stringValue"],
+            "secondary"
+        );
+        assert_eq!(
+            find("sibyl-gateway.error_class").unwrap()["value"]["stringValue"],
+            "upstream_status"
+        );
+        assert_eq!(
+            find("sibyl-gateway.error_message").unwrap()["value"]["stringValue"],
+            "upstream returned 502"
+        );
+
+        // A direct (non-routing) success omits the routing-only attrs but
+        // still carries attempt_index=0.
+        let plain = build_otlp_traces_payload(&sample_event(), "test-exp");
+        let plain_attrs = plain["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let keys: Vec<&str> = plain_attrs
+            .iter()
+            .map(|a| a["key"].as_str().unwrap())
+            .collect();
+        assert!(keys.contains(&"sibyl-gateway.attempt_index"));
+        assert!(!keys.contains(&"sibyl-gateway.attempt_kind"));
+        assert!(!keys.contains(&"sibyl-gateway.attempt_model"));
+        assert!(!keys.contains(&"sibyl-gateway.error_class"));
+    }
+
+    #[test]
+    fn payload_carries_client_attribution_when_present() {
+        let mut ev = sample_event();
+        ev.client_source_ip = "203.0.113.7".into();
+        ev.client_user_agent = "codex-cli/1.2".into();
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let ip = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.client_source_ip");
+        let ua = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.client_user_agent");
+        assert_eq!(
+            ip.expect("client_source_ip attr")["value"]["stringValue"],
+            "203.0.113.7"
+        );
+        assert_eq!(
+            ua.expect("client_user_agent attr")["value"]["stringValue"],
+            "codex-cli/1.2"
+        );
+    }
+
+    #[test]
+    fn payload_omits_client_attribution_when_empty() {
+        let body = build_otlp_traces_payload(&sample_event(), "x");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let keys: Vec<&str> = attrs.iter().map(|a| a["key"].as_str().unwrap()).collect();
+        assert!(!keys.contains(&"sibyl-gateway.client_source_ip"));
+        assert!(!keys.contains(&"sibyl-gateway.client_user_agent"));
+    }
+
+    #[test]
+    fn payload_marks_5xx_as_error_status() {
+        let mut ev = sample_event();
+        ev.status_code = 503;
+        let body = build_otlp_traces_payload(&ev, "x");
+        assert_eq!(
+            body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["status"]["code"],
+            2
+        );
+    }
+
+    fn otlp_test_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+    }
+
+    fn batch_of(n: usize) -> EventBatch {
+        let records = (0..n)
+            .map(|_| Arc::new(crate::sink::SinkRecord::metadata_only(sample_event())))
+            .collect();
+        EventBatch::new(records)
+    }
+
+    #[tokio::test]
+    async fn otlp_sink_posts_one_request_with_all_spans() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/traces"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let sink = OtlpSink::new(
+            "test-exp",
+            format!("{}/v1/traces", server.uri()),
+            BTreeMap::new(),
+            OtlpHttpFanOut::new().inner.client.clone(),
+        );
+
+        let ack = sink
+            .append_batch(&batch_of(3), &IdempotencyMarker::None)
+            .await
+            .expect("2xx delivers the batch");
+        assert_eq!(ack.accepted, 3);
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1, "one batched request, not three spawns");
+        assert_eq!(
+            reqs[0].headers["user-agent"],
+            format!("aisix-dp/{}", sibyl_gateway_core::BUILD_VERSION)
+        );
+        let body: Value = serde_json::from_slice(&reqs[0].body).unwrap();
+        let spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+            .as_array()
+            .unwrap();
+        assert_eq!(spans.len(), 3, "all three spans in one export request");
+    }
+
+    #[tokio::test]
+    async fn otlp_sink_classifies_5xx_as_transient() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let sink = OtlpSink::new("e", server.uri(), BTreeMap::new(), otlp_test_client());
+        let err = sink
+            .append_batch(&batch_of(1), &IdempotencyMarker::None)
+            .await
+            .unwrap_err();
+        assert!(err.is_transient(), "5xx must be retryable: {err}");
+    }
+
+    #[tokio::test]
+    async fn otlp_sink_classifies_4xx_as_permanent() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        let sink = OtlpSink::new("e", server.uri(), BTreeMap::new(), otlp_test_client());
+        let err = sink
+            .append_batch(&batch_of(1), &IdempotencyMarker::None)
+            .await
+            .unwrap_err();
+        assert!(!err.is_transient(), "4xx must be permanent: {err}");
+    }
+
+    #[test]
+    fn payload_omits_empty_optional_fields() {
+        let mut ev = sample_event();
+        ev.provider_request_id = String::new();
+        ev.provider_model_version = String::new();
+        ev.finish_reason = String::new();
+        let body = build_otlp_traces_payload(&ev, "x");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let keys: Vec<&str> = attrs.iter().map(|a| a["key"].as_str().unwrap()).collect();
+        assert!(!keys.contains(&"gen_ai.response.id"));
+        assert!(!keys.contains(&"gen_ai.response.model"));
+        assert!(!keys.contains(&"gen_ai.response.finish_reasons"));
+        // ttft_ms = 0 (default) → omitted
+        assert!(!keys.contains(&"sibyl-gateway.upstream_ttft_ms"));
+    }
+
+    #[test]
+    fn payload_includes_ttft_when_set() {
+        let mut ev = sample_event();
+        ev.upstream_ttft_ms = 42;
+        let body = build_otlp_traces_payload(&ev, "test-exp");
+        let attrs = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let ttft_attr = attrs
+            .iter()
+            .find(|a| a["key"] == "sibyl-gateway.upstream_ttft_ms");
+        assert!(
+            ttft_attr.is_some(),
+            "sibyl-gateway.upstream_ttft_ms should be present"
+        );
+        assert_eq!(ttft_attr.unwrap()["value"]["intValue"], "42");
+    }
+
+    #[test]
+    fn rfc3339_round_trip() {
+        // 2026-05-01T12:00:00Z = 1_777_636_800 unix seconds.
+        // (epoch + 56 years + 14 leap days + 120 days into 2026 + 12h)
+        let nanos = parse_rfc3339_to_unix_nano("2026-05-01T12:00:00Z").unwrap();
+        assert_eq!(nanos, 1_777_636_800 * 1_000_000_000);
+    }
+
+    #[test]
+    fn rfc3339_with_fractional_seconds() {
+        let nanos = parse_rfc3339_to_unix_nano("2026-05-01T12:00:00.5Z").unwrap();
+        assert_eq!(nanos, 1_777_636_800 * 1_000_000_000 + 500_000_000);
+    }
+
+    #[test]
+    fn fan_out_is_a_no_op_on_empty_exporter_list() {
+        // Smoke: building the fan-out struct + calling on an empty
+        // iterator shouldn't panic and shouldn't spawn tasks. We
+        // can't easily count spawned tasks, but if the call returned
+        // and the test process didn't hang, we're good.
+        let f = OtlpHttpFanOut::new();
+        f.fan_out(&sample_event(), None, None, std::iter::empty());
+    }
+
+    #[test]
+    fn disabled_exporter_is_skipped() {
+        // Build a disabled exporter with a deliberately bogus
+        // endpoint; if the fan-out tried to POST to it the spawned
+        // task would log a warning, but never panic. We can't easily
+        // assert "no task was spawned" without instrumentation;
+        // contenting ourselves with "doesn't crash" + the
+        // production code path's `if !exp.enabled { continue }`.
+        let mut exp = sample_exporter();
+        exp.enabled = false;
+        let f = OtlpHttpFanOut::new();
+        f.fan_out(&sample_event(), None, None, std::iter::once(&exp));
+    }
+
+    #[tokio::test]
+    async fn fan_out_sampling_zero_skips_only_that_exporter() {
+        // Two otlp exporters on one fan-out: `sampled-out` at rate 0.0 and
+        // `control` with the rate absent (= 1.0). One event must reach the
+        // control's receiver while the rate-0 exporter enqueues nothing —
+        // its pipeline is never even created.
+        let zero_srv = wiremock::MockServer::start().await;
+        let ctrl_srv = wiremock::MockServer::start().await;
+        for srv in [&zero_srv, &ctrl_srv] {
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .respond_with(wiremock::ResponseTemplate::new(200))
+                .mount(srv)
+                .await;
+        }
+        let mk = |name: &str, uri: &str, rate: Option<f64>| -> ObservabilityExporter {
+            let mut v = serde_json::json!({
+                "name": name,
+                "enabled": true,
+                "kind": "otlp_http",
+                "endpoint": format!("{uri}/v1/traces"),
+            });
+            if let Some(r) = rate {
+                v["sample_rate"] = serde_json::json!(r);
+            }
+            serde_json::from_value(v).unwrap()
+        };
+        let zero = mk("sampled-out", &zero_srv.uri(), Some(0.0));
+        let control = mk("control", &ctrl_srv.uri(), None);
+
+        let f = OtlpHttpFanOut::new();
+        f.fan_out(&sample_event(), None, None, [&zero, &control]);
+
+        // The control's span lands after the 1s flush…
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if !ctrl_srv.received_requests().await.unwrap().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "control exporter saw no OTLP POST within 5s"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        // …while the rate-0 exporter never even created a pipeline (stats
+        // read before shutdown, which tears pipelines down)…
+        assert!(!f.exporter_stats().contains_key("sampled-out"));
+        assert!(f.exporter_stats().contains_key("control"));
+        f.shutdown().await;
+
+        // …and delivered nothing: shutdown drained every pipeline, so
+        // anything enqueued would have been flushed by now.
+        assert!(zero_srv.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fan_out_delivers_a_span_to_a_real_receiver() {
+        // The new fan-out enqueues into a per-exporter pipeline (1s flush);
+        // a single request's span lands at the receiver after the flush.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/traces"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let exp: ObservabilityExporter = serde_json::from_value(serde_json::json!({
+            "name": "real-otlp",
+            "enabled": true,
+            "kind": "otlp_http",
+            "endpoint": format!("{}/v1/traces", server.uri()),
+            "headers": {}
+        }))
+        .unwrap();
+
+        let f = OtlpHttpFanOut::new();
+        f.fan_out(&sample_event(), None, None, std::iter::once(&exp));
+
+        // Poll for the batched POST (flush_interval is 1s).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if !server.received_requests().await.unwrap().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no OTLP POST within 5s"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        f.shutdown().await;
+    }
+}

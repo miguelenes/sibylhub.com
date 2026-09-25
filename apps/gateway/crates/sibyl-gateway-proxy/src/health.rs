@@ -1,0 +1,1738 @@
+//! Per-model health tracking for the admin `/admin/v1/health` endpoint.
+//!
+//! Tracks consecutive upstream failures per model name. The state machine
+//! progresses as follows:
+//!
+//! ```text
+//!  Healthy (0) ──[4+ failures]──► Degraded (1) ──[8+ failures]──► Down (2)
+//!     ▲                               │                               │
+//!     └─────────[any success]─────────┴───────────────────────────────┘
+//! ```
+//!
+//! Thresholds are conservative — a temporary blip doesn't flip a model to
+//! Down. Operators can query the health endpoint to see which models are
+//! under stress without waiting for a full outage.
+
+use dashmap::DashMap;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
+
+use axum::http::header::{HeaderName, HeaderValue, CONTENT_TYPE};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use sibyl_gateway_core::snapshot::SnapshotHandle;
+use sibyl_gateway_core::{GatewaySnapshot, RoutingStrategy};
+use sibyl_gateway_obs::{DeploymentLabels, DeploymentState, Metrics, RequestOutcome};
+
+static X_CONTENT_TYPE_OPTIONS: HeaderName = HeaderName::from_static("x-content-type-options");
+static NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");
+static TEXT_PLAIN_UTF8: HeaderValue = HeaderValue::from_static("text/plain; charset=utf-8");
+
+#[derive(Debug, Default)]
+pub struct LivezState {
+    shutting_down: AtomicBool,
+    /// Requests currently being served on the proxy listener, raised and
+    /// lowered by the telemetry middleware's RAII guard. Read by the
+    /// shutdown coordinator to decide when closing the listener can no
+    /// longer interrupt anything, and reported on the drain heartbeat so
+    /// an operator can watch the tail empty; a streaming response keeps
+    /// its slot for as long as bytes may still flow.
+    in_flight: AtomicUsize,
+    /// Downstream connections currently open on the proxy listener,
+    /// raised and lowered by the acceptor's RAII guard. Distinct from
+    /// `in_flight` and not derivable from it: a pooled connection sitting
+    /// idle carries no request, and during a drain a count that stays up
+    /// while `in_flight` falls is what tells an operator the load
+    /// balancer has not stopped routing here yet (AISIX-Cloud#1394).
+    connections: AtomicUsize,
+}
+
+impl LivezState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn mark_shutting_down(&self) {
+        self.shutting_down.store(true, Ordering::Relaxed);
+    }
+
+    /// Raise the in-flight count. Pair with [`Self::leave`]; the proxy
+    /// does that through a `Drop` guard so a cancelled request still
+    /// lowers the count it raised.
+    pub fn enter(&self) {
+        self.in_flight.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Lower the in-flight count, saturating at zero so an unpaired
+    /// decrement cannot wrap the counter and wedge the drain.
+    pub fn leave(&self) {
+        let _ = self
+            .in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            });
+    }
+
+    /// Requests in flight right now.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::Relaxed)
+    }
+
+    /// Raise the open-connection count. Pair with
+    /// [`Self::connection_closed`]; the acceptor does that through a
+    /// `Drop` guard carried by the accepted stream.
+    pub fn connection_opened(&self) {
+        self.connections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Lower the open-connection count, saturating at zero for the same
+    /// reason [`Self::leave`] does.
+    pub fn connection_closed(&self) {
+        let _ = self
+            .connections
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            });
+    }
+
+    /// Downstream connections open right now.
+    pub fn open_connections(&self) -> usize {
+        self.connections.load(Ordering::Relaxed)
+    }
+
+    fn shutdown_check(&self) -> Result<(), &'static str> {
+        if self.shutting_down.load(Ordering::Relaxed) {
+            Err("process is shutting down")
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether graceful shutdown has been signalled. Used by `/readyz` to
+    /// drain traffic before the process exits.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Relaxed)
+    }
+}
+
+/// Decide whether config availability blocks readiness. `last_apply_age` is
+/// the time since the config watch last applied an event; `None` means no
+/// apply yet — still starting up, or restarted with no usable snapshot
+/// cache. Returns `Some(reason)` when the instance cannot serve, `None`
+/// when it can.
+///
+/// The *age* is deliberately not an input. It measures time since the last
+/// config **event**, and an environment whose resources are not changing
+/// produces none — so a threshold on it reports a healthy gateway as
+/// unready once the environment goes quiet, which for most deployments is
+/// the steady state. `/readyz` previously blocked past 300s and took every
+/// replica out of its Service five minutes after a deployment went idle.
+///
+/// Nor is readiness the right lever for the case that threshold was aimed
+/// at. A genuinely wedged watch is a property of the config source, so it
+/// hits every replica at once: withdrawing them all converts "serving the
+/// last accepted config" into a total outage, with no healthy instance to
+/// shift traffic to. Config freshness stays observable — and alertable —
+/// on `/status/config` and the `sibyl_gateway_config_*` metrics.
+pub fn config_readiness_block(last_apply_age: Option<Duration>) -> Option<&'static str> {
+    match last_apply_age {
+        None => Some("config not yet applied"),
+        Some(_) => None,
+    }
+}
+
+/// `GET /livez` — process liveness: should this instance be RESTARTED?
+///
+/// Answering at all is the check. The listener is bound and the runtime
+/// is servicing requests, which is the whole of what a liveness probe
+/// decides, so this never fails.
+///
+/// A draining instance answers `200` like any other. Draining is
+/// deliberate work, not a fault: an instance that has been told to shut
+/// down is finishing the requests it already accepted, and restarting it
+/// kills exactly those. That is what a failing liveness probe asks a
+/// platform to do, which is why "stop sending traffic here" belongs on
+/// [`readyz_response`] instead — the two questions are what separates
+/// the endpoints, and answering both with the drain state collapses them
+/// into one.
+///
+/// The platform is not the only caller that matters: the gateway also
+/// runs as a single container under docker or systemd, where a
+/// supervisor watching this endpoint would restart a healthy draining
+/// process mid-flight.
+///
+/// [`LivezState`] is deliberately not a parameter. The drain state is the
+/// one thing this answer must not depend on, and not taking it is a
+/// stronger guarantee than a comment saying so.
+pub fn livez_response(verbose: bool) -> Response {
+    let headers = [
+        (CONTENT_TYPE, TEXT_PLAIN_UTF8.clone()),
+        (X_CONTENT_TYPE_OPTIONS.clone(), NOSNIFF.clone()),
+    ];
+
+    if !verbose {
+        return (StatusCode::OK, headers, "ok").into_response();
+    }
+
+    (StatusCode::OK, headers, "[+]ping ok\nlivez check passed\n").into_response()
+}
+
+/// `GET /readyz` — readiness (traffic eligibility), distinct from `/livez`
+/// (process liveness). Returns 503 while draining (graceful shutdown) or
+/// while config isn't fresh (still starting up, or a wedged watch), so
+/// Kubernetes keeps the instance out of the Service endpoints until it can
+/// actually serve. `config_block` is the result of
+/// [`config_readiness_block`]; pass `None` when no freshness signal is
+/// wired (readiness then gates on shutdown only).
+pub fn readyz_response(
+    livez: &LivezState,
+    config_block: Option<&'static str>,
+    verbose: bool,
+) -> Response {
+    let mut body = String::new();
+    let mut failed = false;
+
+    match livez.shutdown_check() {
+        Ok(()) => body.push_str("[+]shutdown ok\n"),
+        Err(_) => {
+            failed = true;
+            body.push_str("[-]shutdown failed: draining\n");
+        }
+    }
+    match config_block {
+        None => body.push_str("[+]config ok\n"),
+        Some(_) => {
+            failed = true;
+            body.push_str("[-]config failed: not ready\n");
+        }
+    }
+
+    let headers = [
+        (CONTENT_TYPE, TEXT_PLAIN_UTF8.clone()),
+        (X_CONTENT_TYPE_OPTIONS.clone(), NOSNIFF.clone()),
+    ];
+
+    if failed {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            headers,
+            format!("{body}readyz check failed"),
+        )
+            .into_response();
+    }
+
+    if !verbose {
+        return (StatusCode::OK, headers, "ok").into_response();
+    }
+
+    (
+        StatusCode::OK,
+        headers,
+        format!("{body}readyz check passed\n"),
+    )
+        .into_response()
+}
+
+/// Numeric health level reported by the API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(into = "u8")]
+pub enum HealthLevel {
+    /// No recent failures — serving normally.
+    Healthy,
+    /// Between `DEGRADED_THRESHOLD` and `DOWN_THRESHOLD` consecutive failures.
+    Degraded,
+    /// At or beyond `DOWN_THRESHOLD` consecutive failures.
+    Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeStatus {
+    Healthy,
+    Unhealthy,
+    Cooldown,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RuntimeStatusSnapshot {
+    pub status: RuntimeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_until: Option<SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_check_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+}
+
+impl Default for RuntimeStatusSnapshot {
+    fn default() -> Self {
+        Self {
+            status: RuntimeStatus::Healthy,
+            cooldown_until: None,
+            last_checked_at: None,
+            last_check_status: None,
+            status_reason: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RuntimeEntry {
+    unhealthy: bool,
+    cooldown_until: Option<SystemTime>,
+    last_checked_at: Option<SystemTime>,
+    last_check_status: Option<u16>,
+    status_reason: Option<String>,
+    /// Exponentially-weighted moving average of recent observed upstream
+    /// latency in milliseconds. `None` until the first sample. Drives the
+    /// `least_latency` routing strategy; independent of health/cooldown.
+    latency_ewma_ms: Option<f64>,
+    /// Number of requests currently in flight to this target. Held in an
+    /// `Arc` so an [`InFlightGuard`] can decrement it after the DashMap lock
+    /// is released (and for the streaming path, after the handler returns).
+    /// Drives the `least_busy` routing strategy.
+    in_flight: Arc<AtomicUsize>,
+    /// Last value published to the `sibyl_gateway_deployment_state` gauge for this
+    /// target, so [`ModelRuntimeStatusTracker::sync_deployment_state`] can
+    /// skip a write when nothing changed. `None` = never published.
+    emitted_state: Option<DeploymentState>,
+}
+
+impl RuntimeEntry {
+    /// Serving state as the router sees it: a target that is cooling down,
+    /// or that its background check has marked unhealthy, is out of
+    /// rotation ([`ModelRuntimeStatusTracker::should_skip_for_routing`]).
+    ///
+    /// The gauge is derived from this — never from "did we just observe a
+    /// transition". A cooldown lapses on its own with nothing calling back
+    /// into the tracker, so an edge-triggered gauge misses the recovery and
+    /// pins the target at Down forever.
+    fn deployment_state(&self, now: SystemTime) -> DeploymentState {
+        if self.unhealthy || self.cooldown_until.is_some_and(|until| until > now) {
+            DeploymentState::Down
+        } else {
+            DeploymentState::Healthy
+        }
+    }
+
+    fn snapshot(&self, now: SystemTime, stale_after: Option<Duration>) -> RuntimeStatusSnapshot {
+        let cooldown_until = self.cooldown_until.filter(|until| *until > now);
+        let unhealthy = self.unhealthy && !self.is_stale(now, stale_after);
+        let status = if cooldown_until.is_some() {
+            RuntimeStatus::Cooldown
+        } else if unhealthy {
+            RuntimeStatus::Unhealthy
+        } else {
+            RuntimeStatus::Healthy
+        };
+        RuntimeStatusSnapshot {
+            status,
+            cooldown_until,
+            last_checked_at: self.last_checked_at,
+            last_check_status: self.last_check_status,
+            status_reason: self.status_reason.clone(),
+        }
+    }
+
+    fn is_stale(&self, now: SystemTime, stale_after: Option<Duration>) -> bool {
+        let Some(stale_after) = stale_after else {
+            return false;
+        };
+        let Some(last_checked_at) = self.last_checked_at else {
+            return false;
+        };
+        match now.duration_since(last_checked_at) {
+            Ok(elapsed) => elapsed > stale_after,
+            Err(_) => false,
+        }
+    }
+}
+
+impl From<HealthLevel> for u8 {
+    fn from(h: HealthLevel) -> u8 {
+        match h {
+            HealthLevel::Healthy => 0,
+            HealthLevel::Degraded => 1,
+            HealthLevel::Down => 2,
+        }
+    }
+}
+
+/// Consecutive failures required to enter Degraded.
+const DEGRADED_THRESHOLD: u32 = 4;
+/// Consecutive failures required to enter Down.
+const DOWN_THRESHOLD: u32 = 8;
+
+struct Entry {
+    consecutive_failures: AtomicU32,
+}
+
+impl Default for Entry {
+    fn default() -> Self {
+        Self {
+            consecutive_failures: AtomicU32::new(0),
+        }
+    }
+}
+
+impl std::fmt::Debug for Entry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Entry")
+            .field(
+                "consecutive_failures",
+                &self.consecutive_failures.load(Ordering::Relaxed),
+            )
+            .finish()
+    }
+}
+
+impl Entry {
+    fn level(&self) -> HealthLevel {
+        let n = self.consecutive_failures.load(Ordering::Relaxed);
+        if n >= DOWN_THRESHOLD {
+            HealthLevel::Down
+        } else if n >= DEGRADED_THRESHOLD {
+            HealthLevel::Degraded
+        } else {
+            HealthLevel::Healthy
+        }
+    }
+
+    fn on_success(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
+    fn on_failure(&self) {
+        // Cap at DOWN_THRESHOLD + 1 so the counter doesn't overflow on long
+        // outages while still being distinguishable from a down-threshold hit.
+        let prev = self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+        if prev > DOWN_THRESHOLD {
+            self.consecutive_failures
+                .store(DOWN_THRESHOLD + 1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Version-gated answer to "does any configured consumer depend on the
+/// exact per-request bookkeeping write path?"
+///
+/// Three predicates, all derived from the live snapshot:
+/// - a Model routes with `least_busy` (reads the in-flight counters,
+///   `crate::routing::order_attempts_by_metric`)
+/// - a Model routes with `least_latency` (reads the latency EWMA)
+/// - a Model has background health checks enabled (the background
+///   checker and the health surface observe tracker state)
+///
+/// While **any** predicate holds, every bookkeeping method below runs its
+/// historical write path unchanged, so configured deployments keep
+/// byte-identical behavior. Only when none holds do the trackers take the
+/// cheap read-first paths — writes whose consumers provably don't exist.
+///
+/// Two tiers, both packed with their key into one atomic so a pair can
+/// never be observed torn. The hot tier is keyed on the snapshot version:
+/// one relaxed load answers "nothing has changed at all". When that
+/// misses, the `models` table generation answers "nothing THIS reads has
+/// changed" — a write to any other resource kind then costs one snapshot
+/// load and restamps the hot tier rather than rescanning every model.
+/// Before AISIX-Cloud#1542 the version was the only key, so every API-key
+/// edit rescanned the whole model table on the next request.
+///
+/// A racing store between a key read and the table walk can cache bits
+/// against a stale key; the next call detects the mismatch and
+/// recomputes, so the value converges immediately.
+#[derive(Debug)]
+pub struct BookkeepingFlags {
+    snapshot: SnapshotHandle<GatewaySnapshot>,
+    /// `(snapshot version << 3) | predicate bits`, or [`UNCOMPUTED`].
+    packed: AtomicU64,
+    /// `(models table generation << 3) | predicate bits`, or
+    /// [`UNCOMPUTED`].
+    packed_by_generation: AtomicU64,
+    /// Walks of the model table. The observable behind "an unrelated
+    /// configuration write does not rescan every model".
+    scans: AtomicU64,
+}
+
+const FLAG_LEAST_BUSY: u64 = 1;
+const FLAG_LEAST_LATENCY: u64 = 1 << 1;
+const FLAG_HEALTH_CHECKS: u64 = 1 << 2;
+const FLAG_BITS: u64 = 0b111;
+const UNCOMPUTED: u64 = u64::MAX;
+
+impl BookkeepingFlags {
+    pub fn new(snapshot: SnapshotHandle<GatewaySnapshot>) -> Arc<Self> {
+        Arc::new(Self {
+            snapshot,
+            packed: AtomicU64::new(UNCOMPUTED),
+            packed_by_generation: AtomicU64::new(UNCOMPUTED),
+            scans: AtomicU64::new(0),
+        })
+    }
+
+    /// True when any predicate holds — the trackers then use their
+    /// historical write paths.
+    pub fn any_active(&self) -> bool {
+        self.bits() != 0
+    }
+
+    /// Model-table walks run so far.
+    #[cfg(test)]
+    fn scans(&self) -> u64 {
+        self.scans.load(Ordering::Relaxed)
+    }
+
+    fn bits(&self) -> u64 {
+        let ver = self.snapshot.version();
+        let packed = self.packed.load(Ordering::Relaxed);
+        if packed != UNCOMPUTED && packed >> 3 == ver {
+            return packed & FLAG_BITS;
+        }
+        let snap = self.snapshot.load();
+        let generation = snap.models.generation();
+        let by_generation = self.packed_by_generation.load(Ordering::Relaxed);
+        if by_generation != UNCOMPUTED && by_generation >> 3 == generation {
+            // Some other table moved. The predicates read `models` only,
+            // so the answer stands — restamp it under the new version so
+            // the next call takes the one-load path again.
+            let bits = by_generation & FLAG_BITS;
+            self.packed.store((ver << 3) | bits, Ordering::Relaxed);
+            return bits;
+        }
+        self.scans.fetch_add(1, Ordering::Relaxed);
+        let mut bits = 0;
+        for entry in snap.models.entries() {
+            let m = &entry.value;
+            if let Some(routing) = &m.routing {
+                match routing.strategy {
+                    RoutingStrategy::LeastBusy => bits |= FLAG_LEAST_BUSY,
+                    RoutingStrategy::LeastLatency => bits |= FLAG_LEAST_LATENCY,
+                    _ => {}
+                }
+            }
+            if m.background_model_check.as_ref().is_some_and(|c| c.enabled) {
+                bits |= FLAG_HEALTH_CHECKS;
+            }
+        }
+        self.packed_by_generation
+            .store((generation << 3) | bits, Ordering::Relaxed);
+        self.packed.store((ver << 3) | bits, Ordering::Relaxed);
+        bits
+    }
+}
+
+/// Shared tracker — one per `ProxyState`, cloned cheaply via `Arc`.
+#[derive(Default, Debug)]
+pub struct HealthTracker {
+    entries: DashMap<String, Entry>,
+    /// `None` (tests, lightweight constructors) means "assume active":
+    /// the historical write path always runs. The production bootstrap
+    /// wires the shared [`BookkeepingFlags`].
+    flags: Option<Arc<BookkeepingFlags>>,
+}
+
+/// Smoothing factor for the per-target latency EWMA. Higher = more weight on
+/// the most recent sample (faster reaction to a slowing upstream), lower =
+/// smoother. 0.3 balances reacting to a real regression against per-request
+/// jitter, roughly matching LiteLLM's last-10-samples moving average.
+const LATENCY_EWMA_ALPHA: f64 = 0.3;
+
+/// Minimum gap between two `routing candidate excluded` lines for the same
+/// (target, reason). The exclusion happens on the per-request routing path,
+/// so an unthrottled line would be one log per request for as long as a
+/// target stays out of rotation — on a busy gateway that is a flood, and a
+/// flood is what gets a diagnostic turned off before the incident that
+/// needs it.
+const EXCLUSION_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Default, Debug)]
+pub struct ModelRuntimeStatusTracker {
+    entries: DashMap<String, RuntimeEntry>,
+    /// Optional metrics sink. Wired only by the production
+    /// [`crate::state::ProxyState::with_components`] bootstrap so cooldown
+    /// transitions surface on the Prometheus scrape
+    /// (`sibyl_gateway_deployment_state` / `sibyl_gateway_deployment_cooled_down_total`);
+    /// `None` in tests and the lightweight constructors, where the tracker
+    /// stays a pure state machine.
+    metrics: Option<Arc<Metrics>>,
+    /// Optional snapshot handle, used purely to resolve a cooled target's
+    /// id into rich deployment labels (provider / upstream_model /
+    /// provider_key_id) at emit time — a rare, O(1) `get_by_id` lookup
+    /// only on a cooldown transition. `None` falls back to model-id-only
+    /// labels.
+    snapshot: Option<SnapshotHandle<GatewaySnapshot>>,
+    /// `None` (tests, lightweight constructors) means "assume active":
+    /// every method runs its historical write path. See
+    /// [`BookkeepingFlags`].
+    flags: Option<Arc<BookkeepingFlags>>,
+    /// When the last `routing candidate excluded` line was written, per
+    /// (routing group, target, reason). See
+    /// [`ModelRuntimeStatusTracker::should_log_exclusion`] for why the
+    /// group is part of the key and not just the target.
+    ///
+    /// Bounded by the configured groups times their members times the two
+    /// reasons; entries for a group or target the operator has since
+    /// deleted are never revisited and cost one key each.
+    exclusion_log: DashMap<(String, String, &'static str), Instant>,
+}
+
+/// RAII guard that decrements a target's in-flight counter when dropped.
+/// Created by [`ModelRuntimeStatusTracker::begin_in_flight`] before an
+/// upstream attempt. For the streaming path the guard is moved into the
+/// stream body so the count stays raised until the stream ends or is
+/// cancelled, matching the request's true lifetime.
+pub struct InFlightGuard {
+    /// `None` is the no-op guard handed out while bookkeeping is
+    /// inactive (no configured consumer); dropping it does nothing. A
+    /// guard armed before a config change that deactivates bookkeeping
+    /// still decrements the counter it incremented, so the count can
+    /// never go negative.
+    counter: Option<Arc<AtomicUsize>>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Some(counter) = &self.counter {
+            counter.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl HealthTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Production constructor: consults the shared [`BookkeepingFlags`]
+    /// so the per-request success write can take the read-first path
+    /// when no configured consumer exists.
+    pub fn with_flags(flags: Arc<BookkeepingFlags>) -> Self {
+        Self {
+            entries: DashMap::new(),
+            flags: Some(flags),
+        }
+    }
+
+    fn bookkeeping_active(&self) -> bool {
+        self.flags.as_ref().is_none_or(|f| f.any_active())
+    }
+
+    /// Record a successful upstream response for `model`.
+    pub fn record_success(&self, model: &str) {
+        if self.bookkeeping_active() {
+            self.entries
+                .entry(model.to_string())
+                .or_default()
+                .on_success();
+            return;
+        }
+        // Read-first path: a model with no tracked failures is already
+        // Healthy — skip the key allocation and the shard write lock the
+        // `entry()` API pays on every call. The counter is atomic, so
+        // the reset happens under the read guard; a miss means the model
+        // never failed and there is nothing to reset.
+        if let Some(e) = self.entries.get(model) {
+            if e.consecutive_failures.load(Ordering::Relaxed) != 0 {
+                e.consecutive_failures.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Record a failed upstream call (any non-4xx bridge error) for `model`.
+    pub fn record_failure(&self, model: &str) {
+        self.entries
+            .entry(model.to_string())
+            .or_default()
+            .on_failure();
+    }
+
+    /// Current [`HealthLevel`] for `model`. Returns `Healthy` if the model
+    /// has never been seen (no prior calls, no failures tracked).
+    pub fn level(&self, model: &str) -> HealthLevel {
+        self.entries
+            .get(model)
+            .map(|e| e.level())
+            .unwrap_or(HealthLevel::Healthy)
+    }
+
+    /// Snapshot of all (model_name, level) pairs seen so far.
+    /// Models with no recorded calls are omitted — callers enumerate the
+    /// snapshot's model table to include never-seen models as Healthy.
+    pub fn all_levels(&self) -> Vec<(String, HealthLevel)> {
+        self.entries
+            .iter()
+            .map(|e| (e.key().clone(), e.value().level()))
+            .collect()
+    }
+}
+
+impl ModelRuntimeStatusTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Production constructor: wires the metrics sink and snapshot handle
+    /// so cooldown transitions emit `sibyl_gateway_deployment_state` /
+    /// `sibyl_gateway_deployment_cooled_down_total`. Used by
+    /// [`crate::state::ProxyState::with_components`]; the plain [`new`]
+    /// (and `Default`) stay metrics-free for tests.
+    pub fn with_observability(
+        metrics: Arc<Metrics>,
+        snapshot: SnapshotHandle<GatewaySnapshot>,
+        flags: Arc<BookkeepingFlags>,
+    ) -> Self {
+        Self {
+            entries: DashMap::new(),
+            metrics: Some(metrics),
+            snapshot: Some(snapshot),
+            flags: Some(flags),
+            exclusion_log: DashMap::new(),
+        }
+    }
+
+    fn bookkeeping_active(&self) -> bool {
+        self.flags.as_ref().is_none_or(|f| f.any_active())
+    }
+
+    /// Rate gate for the `routing candidate excluded` line: true at most
+    /// once per [`EXCLUSION_LOG_INTERVAL`] for a given (routing group,
+    /// target, reason).
+    ///
+    /// The **group** is in the key because the line names one, and the
+    /// operator reads it per group. One direct model is routinely a
+    /// target of several groups; keyed on the target alone, a busy group
+    /// would win the window almost every time it opened and a quiet group
+    /// sharing that target would print nothing at all — leaving exactly
+    /// the "one attempt, no explanation" trace this line exists to
+    /// remove. It also decides `candidates`, which differs per group.
+    ///
+    /// A change of reason logs immediately rather than waiting out the
+    /// previous window, so a target that goes from cooling to
+    /// background-unhealthy is not hidden behind the cooling line. Only
+    /// excluded candidates reach here, so the steady state of a healthy
+    /// group takes no write lock at all.
+    pub(crate) fn should_log_exclusion(
+        &self,
+        virtual_name: &str,
+        model_id: &str,
+        reason: &'static str,
+    ) -> bool {
+        let key = (virtual_name.to_string(), model_id.to_string(), reason);
+        // Decide and update under one guard. A get() guard held by a match
+        // scrutinee would survive into insert() and deadlock on expiration.
+        match self.exclusion_log.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                let now = Instant::now();
+                if now.duration_since(*entry.get()) < EXCLUSION_LOG_INTERVAL {
+                    return false;
+                }
+                entry.insert(now);
+                true
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(Instant::now());
+                true
+            }
+        }
+    }
+
+    pub fn mark_cooldown(&self, model_id: &str, ttl: Duration, reason: impl Into<String>) {
+        let now = SystemTime::now();
+        let until = now + ttl;
+        let reason = reason.into();
+        let mut entry = self.entries.entry(model_id.to_string()).or_default();
+        // A fresh cooldown = the target was not already cooling (never
+        // cooled, or a previous cooldown has since expired). Only that
+        // transition is counted, so a burst of failures re-marking an
+        // already-cooled target doesn't inflate the counter.
+        let entered_cooldown = entry.cooldown_until.is_none_or(|u| u <= now);
+        entry.cooldown_until = Some(until);
+        entry.status_reason = Some(reason);
+        // Hold the DashMap entry guard across the emit so concurrent
+        // cooldown/recovery on the same model can't publish the gauge out of
+        // order (which would leave it stale until the next transition). The
+        // emit only reads `snapshot` and writes `metrics` — it never re-locks
+        // `entries` — so holding the guard here is deadlock-free.
+        if entered_cooldown {
+            self.record_cooldown(model_id);
+        }
+        self.sync_deployment_state(model_id, &mut entry, now);
+    }
+
+    pub fn mark_healthy(&self, model_id: &str) {
+        if self.bookkeeping_active() {
+            if let Some(mut entry) = self.entries.get_mut(model_id) {
+                entry.unhealthy = false;
+                entry.cooldown_until = None;
+                entry.status_reason = None;
+                self.sync_deployment_state(model_id, &mut entry, SystemTime::now());
+            }
+            return;
+        }
+        // Read-first path (no configured bookkeeping consumer): in the
+        // steady state — entry clean, gauge already Healthy — a read
+        // guard and a few field loads replace the per-request shard
+        // write lock + wall-clock read. The write path below still runs
+        // whenever there is anything to do (cooldown early-recovery,
+        // the first-success Healthy publish on an entry begin_in_flight
+        // created), so the `sibyl_gateway_deployment_state` series behaves
+        // exactly as before. A MISSING entry stays a no-op, exactly as
+        // on the historical path: the single-attempt handlers call
+        // mark_healthy without begin_in_flight, and their targets must
+        // not grow a series they never had.
+        let needs_write = match self.entries.get(model_id) {
+            Some(e) => {
+                e.unhealthy
+                    || e.cooldown_until.is_some()
+                    || e.status_reason.is_some()
+                    || e.emitted_state != Some(DeploymentState::Healthy)
+            }
+            None => false,
+        };
+        if !needs_write {
+            return;
+        }
+        if let Some(mut entry) = self.entries.get_mut(model_id) {
+            entry.unhealthy = false;
+            entry.cooldown_until = None;
+            entry.status_reason = None;
+            self.sync_deployment_state(model_id, &mut entry, SystemTime::now());
+        }
+    }
+
+    /// Publish `sibyl_gateway_deployment_state` for `model_id` when the entry's
+    /// serving state differs from what the gauge currently shows. Called
+    /// after every mutation of `unhealthy` / `cooldown_until` — including
+    /// the ones that merely *observe* a lapsed cooldown — so the gauge can
+    /// never disagree with [`RuntimeEntry::deployment_state`]. The dedupe
+    /// keeps already-healthy targets from writing the gauge on every
+    /// successful request.
+    ///
+    /// Emitted while the caller still holds the DashMap entry guard, so
+    /// concurrent cooldown/recovery on the same model can't publish out of
+    /// order (see `mark_cooldown`).
+    fn sync_deployment_state(&self, model_id: &str, entry: &mut RuntimeEntry, now: SystemTime) {
+        let state = entry.deployment_state(now);
+        if entry.emitted_state == Some(state) {
+            return;
+        }
+        entry.emitted_state = Some(state);
+        self.emit_deployment_state(model_id, state);
+    }
+
+    /// Bump the `sibyl_gateway_deployment_{requests,success_responses,failure_responses}_total`
+    /// families for one upstream attempt against `model_id`.
+    ///
+    /// Deliberately keyed on the model id rather than on labels the caller
+    /// assembles: `sibyl_gateway_deployment_state` and `_cooled_down_total` already
+    /// resolve their labels here, and a target has to carry the SAME label
+    /// tuple across all four or an operator cannot join "this deployment is
+    /// cooled down" to "this deployment is failing".
+    pub(crate) fn record_deployment_attempt(&self, model_id: &str, outcome: RequestOutcome) {
+        self.with_deployment_labels(model_id, |metrics, labels| {
+            metrics.record_deployment_request(labels, outcome);
+        });
+    }
+
+    /// Bump `sibyl_gateway_deployment_cooled_down_total` for `model_id`.
+    fn record_cooldown(&self, model_id: &str) {
+        self.with_deployment_labels(model_id, |metrics, labels| {
+            metrics.record_deployment_cooldown(labels);
+        });
+    }
+
+    /// Set the `sibyl_gateway_deployment_state` gauge for `model_id`.
+    fn emit_deployment_state(&self, model_id: &str, state: DeploymentState) {
+        self.with_deployment_labels(model_id, |metrics, labels| {
+            metrics.set_deployment_state(labels, state);
+        });
+    }
+
+    /// Resolve `model_id`'s deployment labels and hand them to `f`. No-op
+    /// unless a metrics sink is wired. Rich labels (provider /
+    /// upstream_model / provider_key_id) come from the snapshot by id; a
+    /// missing snapshot or unknown id falls back to a model-id-only set.
+    fn with_deployment_labels(
+        &self,
+        model_id: &str,
+        f: impl FnOnce(&Metrics, DeploymentLabels<'_>),
+    ) {
+        let Some(metrics) = self.metrics.as_ref() else {
+            return;
+        };
+        let (provider, model, upstream_model, provider_key_id) = self
+            .snapshot
+            .as_ref()
+            .and_then(|handle| {
+                let snap = handle.load();
+                let entry = snap.models.get_by_id(model_id)?;
+                let m = &entry.value;
+                Some((
+                    m.provider.clone().unwrap_or_else(|| "unknown".to_string()),
+                    m.display_name.clone(),
+                    m.upstream_model().unwrap_or("unknown").to_string(),
+                    m.provider_key_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ))
+            })
+            .unwrap_or_else(|| {
+                (
+                    "unknown".to_string(),
+                    model_id.to_string(),
+                    "unknown".to_string(),
+                    "unknown".to_string(),
+                )
+            });
+        f(
+            metrics,
+            DeploymentLabels {
+                provider: &provider,
+                model: &model,
+                upstream_model: &upstream_model,
+                provider_key_id: &provider_key_id,
+            },
+        );
+    }
+
+    pub fn clear_unhealthy(&self, model_id: &str) {
+        if let Some(mut entry) = self.entries.get_mut(model_id) {
+            entry.unhealthy = false;
+            if entry.status_reason.as_deref() == Some("background_check_failed") {
+                entry.status_reason = None;
+            }
+            self.sync_deployment_state(model_id, &mut entry, SystemTime::now());
+        }
+    }
+
+    pub fn mark_unhealthy(&self, model_id: &str, status: Option<u16>, reason: impl Into<String>) {
+        let now = SystemTime::now();
+        let reason = reason.into();
+        let mut entry = self
+            .entries
+            .entry(model_id.to_string())
+            .and_modify(|entry| {
+                entry.unhealthy = true;
+                entry.last_checked_at = Some(now);
+                entry.last_check_status = status;
+                entry.status_reason = Some(reason.clone());
+            })
+            .or_insert_with(|| RuntimeEntry {
+                unhealthy: true,
+                last_checked_at: Some(now),
+                last_check_status: status,
+                status_reason: Some(reason),
+                ..RuntimeEntry::default()
+            });
+        self.sync_deployment_state(model_id, &mut entry, now);
+    }
+
+    pub fn record_ignored_check(&self, model_id: &str, status: u16, reason: impl Into<String>) {
+        let now = SystemTime::now();
+        let reason = reason.into();
+        self.entries
+            .entry(model_id.to_string())
+            .and_modify(|entry| {
+                entry.last_checked_at = Some(now);
+                entry.last_check_status = Some(status);
+                entry.status_reason = Some(reason.clone());
+            })
+            .or_insert_with(|| RuntimeEntry {
+                last_checked_at: Some(now),
+                last_check_status: Some(status),
+                status_reason: Some(reason),
+                ..RuntimeEntry::default()
+            });
+    }
+
+    /// Fold a fresh latency sample (ms) into the target's EWMA. Called on
+    /// each successful upstream attempt; drives the `least_latency` routing
+    /// strategy. Independent of health/cooldown state.
+    pub fn record_latency(&self, model_id: &str, latency_ms: u32) {
+        // The EWMA's only reader is `least_latency` target ordering; with
+        // no such strategy configured the sample has no consumer. When
+        // the strategy is (re)configured the EWMA cold-starts, exactly as
+        // it does on process start.
+        if !self.bookkeeping_active() {
+            return;
+        }
+        let sample = f64::from(latency_ms);
+        self.entries
+            .entry(model_id.to_string())
+            .and_modify(|entry| {
+                entry.latency_ewma_ms = Some(match entry.latency_ewma_ms {
+                    Some(prev) => LATENCY_EWMA_ALPHA * sample + (1.0 - LATENCY_EWMA_ALPHA) * prev,
+                    None => sample,
+                });
+            })
+            .or_insert_with(|| RuntimeEntry {
+                latency_ewma_ms: Some(sample),
+                ..RuntimeEntry::default()
+            });
+    }
+
+    /// Current latency EWMA (ms) for `model_id`, or `None` if never sampled.
+    pub fn latency_ewma_ms(&self, model_id: &str) -> Option<f64> {
+        self.entries.get(model_id).and_then(|e| e.latency_ewma_ms)
+    }
+
+    /// Mark one request as in flight to `model_id` and return a guard that
+    /// decrements the count when dropped. Drives the `least_busy` strategy.
+    pub fn begin_in_flight(&self, model_id: &str) -> InFlightGuard {
+        // The counter's only reader is `least_busy` target ordering; with
+        // no such strategy configured, hand out a no-op guard instead of
+        // paying the counter RMWs and guard refcount per request. When
+        // the strategy is (re)configured, counting resumes for new
+        // requests; requests already in flight hold no-op guards, so the
+        // count transiently underreads until they drain — the same
+        // cold-start the counter has on process start.
+        //
+        // The ENTRY-CREATION side effect is preserved: `mark_healthy`'s
+        // first-success Healthy publish keys off the entry this method
+        // creates, and only the endpoints that call begin_in_flight may
+        // publish that series (the single-attempt handlers never do).
+        // Steady state downgrades to a read-guard existence check.
+        if !self.bookkeeping_active() {
+            if self.entries.get(model_id).is_none() {
+                self.entries.entry(model_id.to_string()).or_default();
+            }
+            return InFlightGuard { counter: None };
+        }
+        let counter = Arc::clone(
+            &self
+                .entries
+                .entry(model_id.to_string())
+                .or_default()
+                .in_flight,
+        );
+        counter.fetch_add(1, Ordering::Relaxed);
+        InFlightGuard {
+            counter: Some(counter),
+        }
+    }
+
+    /// Current in-flight request count for `model_id`.
+    pub fn in_flight(&self, model_id: &str) -> usize {
+        self.entries
+            .get(model_id)
+            .map(|e| e.in_flight.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    pub fn status(&self, model_id: &str) -> RuntimeStatusSnapshot {
+        self.status_with_stale(model_id, None)
+    }
+
+    pub fn status_with_stale(
+        &self,
+        model_id: &str,
+        stale_after: Option<Duration>,
+    ) -> RuntimeStatusSnapshot {
+        let now = SystemTime::now();
+        self.entries
+            .get(model_id)
+            .map(|entry| entry.snapshot(now, stale_after))
+            .unwrap_or_default()
+    }
+
+    pub fn should_skip_for_routing(
+        &self,
+        model_id: &str,
+        stale_after: Option<Duration>,
+    ) -> RuntimeStatus {
+        self.status_with_stale(model_id, stale_after).status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use std::thread;
+
+    fn an_api_key() -> sibyl_gateway_core::ApiKey {
+        serde_json::from_str(r#"{"key_hash":"abc","allowed_models":["vg"]}"#).expect("test key")
+    }
+
+    #[test]
+    fn a_write_to_an_unrelated_table_does_not_rescan_the_models() {
+        // The predicates read `models` and nothing else, but they used to
+        // be keyed on the snapshot version, which moves on every
+        // published write of any kind — so a bulk API-key edit rescanned
+        // the whole model table on the next request (AISIX-Cloud#1542).
+        let handle =
+            SnapshotHandle::new(snapshot_with(Some(model_json(Some("least_busy"), false))));
+        let flags = BookkeepingFlags::new(handle.clone());
+        assert!(flags.any_active());
+        assert_eq!(flags.scans(), 1);
+
+        for i in 0..5 {
+            let next = handle.load().as_ref().clone();
+            next.apikeys.insert(sibyl_gateway_core::ResourceEntry::new(
+                format!("k-{i}"),
+                an_api_key(),
+                1,
+            ));
+            handle.store(next);
+            assert!(flags.any_active(), "the answer must not change");
+        }
+        assert_eq!(flags.scans(), 1, "the model table was walked again");
+
+        // A write that DOES touch models rescans.
+        let next = handle.load().as_ref().clone();
+        next.models.remove("m-1");
+        handle.store(next);
+        assert!(!flags.any_active());
+        assert_eq!(flags.scans(), 2);
+    }
+
+    #[test]
+    fn new_model_is_healthy() {
+        let t = HealthTracker::new();
+        assert_eq!(t.level("m"), HealthLevel::Healthy);
+    }
+
+    #[test]
+    fn consecutive_failures_transition_to_degraded_then_down() {
+        let t = HealthTracker::new();
+        for i in 1..=10 {
+            t.record_failure("m");
+            let expected = if i < DEGRADED_THRESHOLD {
+                HealthLevel::Healthy
+            } else if i < DOWN_THRESHOLD {
+                HealthLevel::Degraded
+            } else {
+                HealthLevel::Down
+            };
+            assert_eq!(t.level("m"), expected, "wrong level after {i} failures");
+        }
+    }
+
+    #[test]
+    fn success_resets_to_healthy_regardless_of_prior_state() {
+        let t = HealthTracker::new();
+        for _ in 0..10 {
+            t.record_failure("m");
+        }
+        assert_eq!(t.level("m"), HealthLevel::Down);
+        t.record_success("m");
+        assert_eq!(t.level("m"), HealthLevel::Healthy);
+    }
+
+    #[test]
+    fn models_are_independent() {
+        let t = HealthTracker::new();
+        for _ in 0..10 {
+            t.record_failure("bad");
+        }
+        assert_eq!(t.level("good"), HealthLevel::Healthy);
+        assert_eq!(t.level("bad"), HealthLevel::Down);
+    }
+
+    #[test]
+    fn all_levels_omits_never_seen_models() {
+        let t = HealthTracker::new();
+        assert!(t.all_levels().is_empty());
+        t.record_success("m");
+        assert_eq!(t.all_levels().len(), 1);
+    }
+
+    // -------------------------------------------------------------------
+    // On-demand bookkeeping (BookkeepingFlags)
+    // -------------------------------------------------------------------
+
+    fn model_json(routing_strategy: Option<&str>, health_check: bool) -> sibyl_gateway_core::Model {
+        let mut v = serde_json::json!({ "name": "vg", "display_name": "vg" });
+        if let Some(s) = routing_strategy {
+            v["routing"] = serde_json::json!({
+                "strategy": s,
+                "targets": [{ "model": "d1" }],
+            });
+        }
+        if health_check {
+            v["background_model_check"] = serde_json::json!({
+                "enabled": true,
+                "interval_seconds": 5,
+                "timeout_seconds": 1,
+                "prompt": "ping",
+                "max_tokens": 1,
+                "stale_after_seconds": 60,
+            });
+        }
+        serde_json::from_value(v).expect("test model json")
+    }
+
+    fn snapshot_with(model: Option<sibyl_gateway_core::Model>) -> GatewaySnapshot {
+        let snap = GatewaySnapshot::new();
+        if let Some(m) = model {
+            snap.models
+                .insert(sibyl_gateway_core::ResourceEntry::new("m-1", m, 1));
+        }
+        snap
+    }
+
+    fn inactive_tracker() -> (SnapshotHandle<GatewaySnapshot>, ModelRuntimeStatusTracker) {
+        let handle = SnapshotHandle::new(snapshot_with(None));
+        let flags = BookkeepingFlags::new(handle.clone());
+        let t = ModelRuntimeStatusTracker {
+            entries: DashMap::new(),
+            metrics: None,
+            snapshot: None,
+            flags: Some(flags),
+            ..Default::default()
+        };
+        (handle, t)
+    }
+
+    #[test]
+    fn bookkeeping_flags_derive_from_snapshot() {
+        for (model, expect) in [
+            (None, false),
+            (Some(model_json(Some("round_robin"), false)), false),
+            (Some(model_json(Some("consistent_hash"), false)), false),
+            (Some(model_json(Some("failover"), false)), false),
+            // least_cost ranks by static configured cost, not runtime
+            // bookkeeping — it must NOT activate the write paths.
+            (Some(model_json(Some("least_cost"), false)), false),
+            (Some(model_json(Some("least_busy"), false)), true),
+            (Some(model_json(Some("least_latency"), false)), true),
+            (Some(model_json(None, true)), true),
+        ] {
+            let described = format!("{model:?}");
+            let flags = BookkeepingFlags::new(SnapshotHandle::new(snapshot_with(model)));
+            assert_eq!(flags.any_active(), expect, "for {described}");
+        }
+    }
+
+    #[test]
+    fn inactive_bookkeeping_skips_inflight_and_latency() {
+        let (_handle, t) = inactive_tracker();
+        let g = t.begin_in_flight("d1");
+        assert_eq!(t.in_flight("d1"), 0, "no-op guard must not count");
+        drop(g);
+        assert_eq!(t.in_flight("d1"), 0, "no-op guard must not underflow");
+        t.record_latency("d1", 100);
+        assert_eq!(t.latency_ewma_ms("d1"), None);
+    }
+
+    #[test]
+    fn bookkeeping_reactivates_on_snapshot_swap() {
+        let (handle, t) = inactive_tracker();
+        let g = t.begin_in_flight("d1");
+        assert_eq!(t.in_flight("d1"), 0);
+        drop(g);
+
+        // Config change introduces a least_busy router → counting resumes
+        // (version-gated recompute, no restart needed).
+        handle.store(snapshot_with(Some(model_json(Some("least_busy"), false))));
+        let g = t.begin_in_flight("d1");
+        assert_eq!(t.in_flight("d1"), 1);
+        // Any active predicate takes the WHOLE family back to the old
+        // path — least_busy alone re-enables the EWMA write too.
+        t.record_latency("d1", 100);
+        assert_eq!(t.latency_ewma_ms("d1"), Some(100.0));
+        drop(g);
+        assert_eq!(t.in_flight("d1"), 0);
+    }
+
+    #[test]
+    fn inactive_mark_healthy_publishes_healthy_once_then_reads() {
+        let (_handle, t) = inactive_tracker();
+        // Real multi-attempt-endpoint sequence: begin_in_flight creates
+        // the entry (no-op guard, but the side effect is preserved),
+        // then the first success publishes Healthy.
+        drop(t.begin_in_flight("d1"));
+        t.mark_healthy("d1");
+        {
+            let e = t
+                .entries
+                .get("d1")
+                .expect("entry created by begin_in_flight");
+            assert_eq!(e.emitted_state, Some(DeploymentState::Healthy));
+        }
+        // Steady state: read-only, entry untouched.
+        t.mark_healthy("d1");
+        assert_eq!(t.status("d1").status, RuntimeStatus::Healthy);
+    }
+
+    /// The single-attempt handlers (embeddings, images, completions,
+    /// audio, rerank, count_tokens) call mark_healthy WITHOUT
+    /// begin_in_flight. On the historical path their targets never got
+    /// an entry — and therefore never published `sibyl_gateway_deployment_state`
+    /// — so the inactive fast path must stay a no-op for a missing
+    /// entry, or zero-config deployments grow a series main never had.
+    #[test]
+    fn inactive_mark_healthy_without_begin_in_flight_stays_noop() {
+        let (_handle, t) = inactive_tracker();
+        t.mark_healthy("embeddings-only-target");
+        assert!(
+            t.entries.get("embeddings-only-target").is_none(),
+            "mark_healthy on a never-seen id must not create an entry"
+        );
+    }
+
+    #[test]
+    fn inactive_mark_healthy_still_recovers_cooldown_early() {
+        let (_handle, t) = inactive_tracker();
+        t.mark_cooldown("d1", Duration::from_secs(3600), "upstream failure");
+        assert_eq!(t.status("d1").status, RuntimeStatus::Cooldown);
+        // A success during cooldown still recovers immediately — the
+        // read-first path detects the dirty entry and takes the full
+        // write path.
+        t.mark_healthy("d1");
+        assert_eq!(t.status("d1").status, RuntimeStatus::Healthy);
+        assert_eq!(
+            t.entries.get("d1").unwrap().emitted_state,
+            Some(DeploymentState::Healthy)
+        );
+    }
+
+    #[test]
+    fn inactive_record_success_creates_no_entry_but_still_resets() {
+        let flags = BookkeepingFlags::new(SnapshotHandle::new(snapshot_with(None)));
+        let t = HealthTracker::with_flags(flags);
+        // Happy path: no failures → no entry, no allocation.
+        t.record_success("m");
+        assert!(
+            t.all_levels().is_empty(),
+            "no entry for a never-failed model"
+        );
+        assert_eq!(t.level("m"), HealthLevel::Healthy);
+        // Reset still works through the read guard.
+        for _ in 0..10 {
+            t.record_failure("m");
+        }
+        assert_eq!(t.level("m"), HealthLevel::Down);
+        t.record_success("m");
+        assert_eq!(t.level("m"), HealthLevel::Healthy);
+    }
+
+    #[tokio::test]
+    async fn livez_default_success_is_plain_ok() {
+        let resp = livez_response(false);
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn livez_verbose_success_lists_checks() {
+        let resp = livez_response(true);
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("[+]ping ok"));
+        assert!(text.contains("livez check passed"));
+    }
+
+    /// A draining instance is healthy and must not be restarted:
+    /// restarting it kills the in-flight requests the drain exists to
+    /// finish. Liveness therefore stays `200` throughout, and it is
+    /// `/readyz` that withdraws the instance from traffic — the test
+    /// below pins the other half.
+    #[tokio::test]
+    async fn livez_stays_ok_while_draining() {
+        let state = LivezState::new();
+        state.mark_shutting_down();
+
+        let resp = livez_response(false);
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let readyz = readyz_response(&state, None, false);
+        assert_eq!(
+            readyz.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the drain has to be visible somewhere, and readiness is where",
+        );
+    }
+
+    /// The count has to survive an unpaired decrement: it is reported on
+    /// the drain heartbeat, and a wrapped counter would report billions of
+    /// open connections at exactly the moment an operator is reading the
+    /// line to decide whether traffic is still arriving.
+    #[test]
+    fn open_connections_saturates_at_zero() {
+        let state = LivezState::new();
+        assert_eq!(state.open_connections(), 0);
+
+        state.connection_closed();
+        assert_eq!(state.open_connections(), 0);
+
+        state.connection_opened();
+        state.connection_opened();
+        assert_eq!(state.open_connections(), 2);
+
+        state.connection_closed();
+        state.connection_closed();
+        state.connection_closed();
+        assert_eq!(state.open_connections(), 0);
+    }
+
+    #[test]
+    fn config_readiness_block_logic() {
+        // No apply yet → not ready (startup).
+        assert!(config_readiness_block(None).is_some());
+        // Applied → ready.
+        assert!(config_readiness_block(Some(Duration::from_secs(5))).is_none());
+    }
+
+    #[test]
+    fn an_idle_environment_stays_ready() {
+        // The age is time since the last config EVENT, and an environment
+        // whose resources are not changing produces none. Blocking on it
+        // took every replica out of its Service five minutes after the
+        // deployment went quiet, while the watch was healthy the whole
+        // time. Ready must not depend on how long ago the last event was.
+        for age in [
+            Duration::from_secs(299),
+            Duration::from_secs(301),
+            Duration::from_secs(3600),
+            Duration::from_secs(86_400 * 7),
+        ] {
+            assert!(
+                config_readiness_block(Some(age)).is_none(),
+                "config applied {age:?} ago must still be ready",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn readyz_ok_when_not_draining_and_config_fresh() {
+        let state = LivezState::new();
+        let resp = readyz_response(&state, None, false);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn readyz_503_when_draining() {
+        let state = LivezState::new();
+        state.mark_shutting_down();
+        let resp = readyz_response(&state, None, false);
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn readyz_503_when_config_not_ready() {
+        let state = LivezState::new();
+        let resp = readyz_response(&state, Some("config not yet applied"), true);
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("[-]config failed"));
+    }
+
+    #[test]
+    fn runtime_tracker_defaults_to_healthy() {
+        let t = ModelRuntimeStatusTracker::new();
+        let s = t.status("m-1");
+        assert_eq!(s.status, RuntimeStatus::Healthy);
+        assert!(s.cooldown_until.is_none());
+    }
+
+    #[test]
+    fn runtime_tracker_cooldown_expires() {
+        let t = ModelRuntimeStatusTracker::new();
+        t.mark_cooldown("m-1", Duration::from_millis(5), "retryable_failure");
+        assert_eq!(t.status("m-1").status, RuntimeStatus::Cooldown);
+        thread::sleep(Duration::from_millis(10));
+        assert_eq!(t.status("m-1").status, RuntimeStatus::Healthy);
+    }
+
+    #[test]
+    fn runtime_tracker_unhealthy_then_healthy() {
+        let t = ModelRuntimeStatusTracker::new();
+        t.mark_unhealthy("m-1", Some(500), "background_check_failed");
+        let unhealthy = t.status("m-1");
+        assert_eq!(unhealthy.status, RuntimeStatus::Unhealthy);
+        assert_eq!(unhealthy.last_check_status, Some(500));
+        t.mark_healthy("m-1");
+        assert_eq!(t.status("m-1").status, RuntimeStatus::Healthy);
+    }
+
+    #[test]
+    fn cooldown_transition_emits_deployment_metrics_once() {
+        use sibyl_gateway_core::{Model, ResourceEntry};
+
+        // A snapshot with one direct model lets the tracker resolve rich
+        // labels (provider / upstream_model / provider_key_id) for the
+        // cooled target id instead of falling back to model-id-only.
+        let model: Model = serde_json::from_value(serde_json::json!({
+            "display_name": "cooldown-metrics-model",
+            "provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "provider_key_id": "pk-cooldown",
+        }))
+        .unwrap();
+        let snapshot = GatewaySnapshot::new();
+        snapshot
+            .models
+            .insert(ResourceEntry::new("m-cool", model, 1));
+
+        let metrics = Arc::new(Metrics::new(false));
+        let handle = SnapshotHandle::new(snapshot);
+        let tracker = ModelRuntimeStatusTracker::with_observability(
+            metrics.clone(),
+            handle.clone(),
+            BookkeepingFlags::new(handle),
+        );
+
+        // First mark = a fresh transition (counter++, gauge → Down). The
+        // second mark re-cools an already-cooled target and must NOT
+        // double-count.
+        tracker.mark_cooldown("m-cool", Duration::from_secs(30), "upstream_server_error");
+        tracker.mark_cooldown("m-cool", Duration::from_secs(30), "upstream_server_error");
+
+        let scrape = metrics.render();
+        assert!(
+            scrape.contains("sibyl_gateway_deployment_cooled_down_total"),
+            "cooldown counter missing from scrape:\n{scrape}"
+        );
+        // Labels came from the snapshot, not the model-id-only fallback.
+        assert!(
+            scrape.contains("provider=\"openai\"")
+                && scrape.contains("upstream_model=\"gpt-4o-mini\"")
+                && scrape.contains("provider_key_id=\"pk-cooldown\""),
+            "expected resolved deployment labels in scrape:\n{scrape}"
+        );
+        let cooled = scrape
+            .lines()
+            .find(|l| l.starts_with("sibyl_gateway_deployment_cooled_down_total{"))
+            .expect("cooldown counter line");
+        let count: f64 = cooled.rsplit(' ').next().unwrap().parse().unwrap();
+        assert_eq!(count, 1.0, "cooldown counted once per transition: {cooled}");
+
+        // Recovery flips the gauge back to Healthy(0).
+        tracker.mark_healthy("m-cool");
+        assert_eq!(
+            deployment_state_gauge(&metrics),
+            Some(0.0),
+            "state gauge is Healthy(0) after recovery"
+        );
+    }
+
+    /// A cooldown that lapses on its own is the *ordinary* recovery: the
+    /// router filters cooled targets out of rotation, so nothing calls back
+    /// into the tracker while the TTL runs down, and the first success
+    /// arrives only after it has already expired. The old edge-triggered
+    /// gauge could not see a transition at that point and left the target
+    /// pinned at Down(2) forever.
+    #[test]
+    fn gauge_returns_to_healthy_after_a_cooldown_expires_naturally() {
+        let metrics = Arc::new(Metrics::new(false));
+        let handle = SnapshotHandle::new(GatewaySnapshot::new());
+        let tracker = ModelRuntimeStatusTracker::with_observability(
+            metrics.clone(),
+            handle.clone(),
+            BookkeepingFlags::new(handle),
+        );
+
+        tracker.mark_cooldown(
+            "m-expiry",
+            Duration::from_millis(5),
+            "upstream_server_error",
+        );
+        assert_eq!(deployment_state_gauge(&metrics), Some(2.0), "cooled → Down");
+
+        thread::sleep(Duration::from_millis(15));
+        assert_eq!(
+            tracker.status("m-expiry").status,
+            RuntimeStatus::Healthy,
+            "the cooldown has lapsed, so the target is back in rotation"
+        );
+
+        tracker.mark_healthy("m-expiry");
+        assert_eq!(
+            deployment_state_gauge(&metrics),
+            Some(0.0),
+            "gauge follows the target back into rotation"
+        );
+    }
+
+    /// A background check failure takes the target out of rotation exactly
+    /// like a cooldown does (`should_skip_for_routing` → Unhealthy), so the
+    /// gauge has to say Down — and come back on the next passing check.
+    #[test]
+    fn gauge_tracks_background_check_failures_and_recovery() {
+        let metrics = Arc::new(Metrics::new(false));
+        let handle = SnapshotHandle::new(GatewaySnapshot::new());
+        let tracker = ModelRuntimeStatusTracker::with_observability(
+            metrics.clone(),
+            handle.clone(),
+            BookkeepingFlags::new(handle),
+        );
+
+        tracker.mark_unhealthy("m-bg", Some(503), "background_check_failed");
+        assert_eq!(deployment_state_gauge(&metrics), Some(2.0));
+
+        tracker.clear_unhealthy("m-bg");
+        assert_eq!(deployment_state_gauge(&metrics), Some(0.0));
+    }
+
+    /// The gauge is level-triggered but not chatty: a target that is already
+    /// healthy must not re-publish on every successful request, and the
+    /// cooldown counter must not move when nothing entered cooldown.
+    #[test]
+    fn repeated_success_neither_churns_the_gauge_nor_the_cooldown_counter() {
+        let metrics = Arc::new(Metrics::new(false));
+        let handle = SnapshotHandle::new(GatewaySnapshot::new());
+        let tracker = ModelRuntimeStatusTracker::with_observability(
+            metrics.clone(),
+            handle.clone(),
+            BookkeepingFlags::new(handle),
+        );
+
+        // With bookkeeping active begin_in_flight creates the entry; with
+        // it inactive (this tracker: empty snapshot) the first mark_healthy
+        // does. Either way the assertions below must hold.
+        drop(tracker.begin_in_flight("m-ok"));
+        tracker.mark_healthy("m-ok");
+        tracker.mark_healthy("m-ok");
+        tracker.mark_healthy("m-ok");
+
+        assert_eq!(deployment_state_gauge(&metrics), Some(0.0));
+        assert!(
+            !metrics
+                .render()
+                .contains("sibyl_gateway_deployment_cooled_down_total"),
+            "a never-cooled target must not emit the cooldown counter"
+        );
+    }
+
+    /// Value of the single `sibyl_gateway_deployment_state` series in the scrape.
+    fn deployment_state_gauge(metrics: &Metrics) -> Option<f64> {
+        metrics
+            .render()
+            .lines()
+            .find(|l| l.starts_with("sibyl_gateway_deployment_state{"))
+            .and_then(|l| l.rsplit(' ').next()?.parse().ok())
+    }
+
+    #[test]
+    fn runtime_tracker_ignored_status_does_not_mark_unhealthy() {
+        let t = ModelRuntimeStatusTracker::new();
+        t.record_ignored_check("m-1", 429, "ignored_transient_error");
+        let s = t.status("m-1");
+        assert_eq!(s.status, RuntimeStatus::Healthy);
+        assert_eq!(s.last_check_status, Some(429));
+        assert_eq!(s.status_reason.as_deref(), Some("ignored_transient_error"));
+    }
+
+    #[test]
+    fn exclusion_log_gate_throttles_a_repeat_and_lets_a_new_reason_through() {
+        // The gate is what keeps the `routing candidate excluded` WARN
+        // off the per-request hot path. Its two obligations: never write
+        // the same (target, reason) twice inside the window, and never
+        // let the window hide a target whose reason has changed.
+        let t = ModelRuntimeStatusTracker::new();
+        assert!(t.should_log_exclusion("g-1", "m-1", "cooling"));
+        assert!(!t.should_log_exclusion("g-1", "m-1", "cooling"));
+        assert!(t.should_log_exclusion("g-1", "m-1", "unhealthy"));
+        assert!(!t.should_log_exclusion("g-1", "m-1", "unhealthy"));
+        // Throttling is per target, not global.
+        assert!(t.should_log_exclusion("g-1", "m-2", "cooling"));
+        // …and per routing group: a second group that shares `m-1` still
+        // gets its own line, because it has its own `candidates` count and
+        // its own operator reading it.
+        assert!(t.should_log_exclusion("g-2", "m-1", "cooling"));
+        assert!(!t.should_log_exclusion("g-2", "m-1", "cooling"));
+    }
+
+    #[test]
+    fn exclusion_log_gate_does_not_extend_the_window_when_suppressed() {
+        let t = ModelRuntimeStatusTracker::new();
+        let key = ("g-1".to_string(), "m-1".to_string(), "cooling");
+        let logged_at = Instant::now() - EXCLUSION_LOG_INTERVAL / 2;
+        t.exclusion_log.insert(key.clone(), logged_at);
+
+        for _ in 0..8 {
+            assert!(!t.should_log_exclusion("g-1", "m-1", "cooling"));
+            // Busy traffic must not postpone the next log indefinitely.
+            assert_eq!(*t.exclusion_log.get(&key).unwrap(), logged_at);
+        }
+    }
+
+    #[test]
+    fn exclusion_log_gate_reopens_after_the_interval_without_blocking() {
+        let t = Arc::new(ModelRuntimeStatusTracker::new());
+        t.exclusion_log.insert(
+            ("g-1".to_string(), "m-1".to_string(), "cooling"),
+            Instant::now() - EXCLUSION_LOG_INTERVAL,
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let reopened = t.should_log_exclusion("g-1", "m-1", "cooling");
+            let repeated = t.should_log_exclusion("g-1", "m-1", "cooling");
+            tx.send((reopened, repeated)).unwrap();
+        });
+        // A synchronous lock deadlock cannot be bounded by a Tokio timeout
+        // on the same worker. Keep the watchdog on the test thread.
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("exclusion logging blocked after its throttle expired"),
+            (true, false),
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn exclusion_log_gate_allows_one_concurrent_writer_per_window() {
+        for expired in [false, true] {
+            let t = Arc::new(ModelRuntimeStatusTracker::new());
+            if expired {
+                t.exclusion_log.insert(
+                    ("g-1".to_string(), "m-1".to_string(), "cooling"),
+                    Instant::now() - EXCLUSION_LOG_INTERVAL,
+                );
+            }
+            let barrier = Arc::new(std::sync::Barrier::new(8));
+            let (tx, rx) = std::sync::mpsc::channel();
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    let t = t.clone();
+                    let barrier = barrier.clone();
+                    let tx = tx.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        tx.send(t.should_log_exclusion("g-1", "m-1", "cooling"))
+                            .unwrap();
+                    })
+                })
+                .collect();
+            let allowed = (0..8)
+                .map(|_| {
+                    usize::from(
+                        rx.recv_timeout(Duration::from_secs(2))
+                            .expect("concurrent exclusion logging blocked"),
+                    )
+                })
+                .sum::<usize>();
+            assert_eq!(allowed, 1, "expired={expired}");
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_tracker_unhealthy_becomes_healthy_after_stale_window() {
+        let t = ModelRuntimeStatusTracker::new();
+        t.mark_unhealthy("m-1", Some(503), "background_check_failed");
+        assert_eq!(
+            t.status_with_stale("m-1", Some(Duration::from_secs(60)))
+                .status,
+            RuntimeStatus::Unhealthy
+        );
+        std::thread::sleep(Duration::from_millis(15));
+        assert_eq!(
+            t.status_with_stale("m-1", Some(Duration::from_millis(1)))
+                .status,
+            RuntimeStatus::Healthy
+        );
+    }
+}

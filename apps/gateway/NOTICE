@@ -1,0 +1,12 @@
+SibylHub Gateway
+Copyright 2026 SibylHub
+
+This product includes software derived from the AISIX AI Gateway
+(https://github.com/api7/aisix) by API7, licensed under the Apache
+License, Version 2.0. The gateway has been renamed and is developed
+further as part of the SibylHub platform. It is not the AISIX/API7
+product, and no endorsement by API7 is implied.
+
+Historical issue references to the upstream tracker
+(api7/AISIX-Cloud#NNN) are preserved in source comments because they
+document the origin of the code they annotate.

@@ -126,7 +126,10 @@ The documentation pages will use checked-in source as follows:
 - The FastMCP/edge page will describe the explicit audit and authorization
   boundary and will state that the current repository has no first-party
   Rosie/FastMCP execution source. It will not imply that an unavailable
-  runtime, sandbox, or gateway is implemented.
+  runtime or sandbox is implemented, and it will link to the SibylHub
+  Gateway documentation for the separately documented AI traffic gateway
+  (`apps/gateway`), which is implemented but does not execute Rosie/FastMCP
+  tools.
 - The CLI page will reproduce the supported command forms, default paths,
   local registry-only behavior, sync prerequisites, bounded effects, and
   release build path from the CLI README and Clap definitions.
@@ -171,7 +174,9 @@ data change must provide its own authoritative export and validation contract.
   patch, run recursive validation, and rely on strict Docusaurus link failure.
 - [Risk] The requested Rosie/FastMCP wording could be read as an implemented
   runtime. -> Use an explicit status section distinguishing checked-in
-  contracts, planned architecture, and unavailable first-party source.
+  contracts, the implemented SibylHub Gateway (which routes AI traffic but
+  does not execute Rosie/FastMCP tools), and unavailable first-party
+  execution source.
 - [Risk] Package CSS exports are unavailable before the design-system package
   builds. -> Keep the workspace dependency and Turborepo build dependency
   graph intact, and verify the docs build from a clean generated-package

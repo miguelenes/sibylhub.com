@@ -1,0 +1,12 @@
+{
+  "extends": "@sibylhub/typescript-config/base.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "coverage"]
+}

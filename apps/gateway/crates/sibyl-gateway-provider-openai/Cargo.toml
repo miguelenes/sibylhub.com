@@ -1,0 +1,32 @@
+[package]
+name = "sibyl-gateway-provider-openai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway: OpenAI provider (also used by OpenAI-compatible providers)"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-stream = "0.3"
+bytes.workspace = true
+http.workspace = true
+
+[dev-dependencies]
+# Only for the strict-structured-output test: the `/v1/messages` inbound
+# translation lives in the Anthropic crate, and what this edge must emit
+# for it is exactly what that translation feeds in. No cycle — the
+# Anthropic crate depends on sibyl-gateway-hub and sibyl-gateway-core only.
+sibyl-gateway-provider-anthropic = { path = "../sibyl-gateway-provider-anthropic" }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+wiremock.workspace = true

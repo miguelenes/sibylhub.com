@@ -1,0 +1,414 @@
+//! Downstream client attribution for usage logs (#492).
+//!
+//! Resolves the real client IP and the `User-Agent` once per request and
+//! exposes them via the [`ClientContext`] extractor — the same low-churn
+//! `FromRequestParts` pattern handlers already use for `AuthenticatedKey`.
+//!
+//! IP resolution mirrors nginx `set_real_ip_from` + `real_ip_recursive`:
+//! the immediate TCP peer is the client unless it's a configured trusted
+//! proxy, in which case the configured forwarded header (default
+//! `x-forwarded-for`) is walked to find the originating address. With no
+//! trusted proxies configured (the default) the peer is always logged.
+
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+
+use axum::extract::{ConnectInfo, FromRef, FromRequestParts};
+use axum::http::request::Parts;
+use axum::http::HeaderMap;
+use ipnet::IpNet;
+use sibyl_gateway_core::config::RealIpConfig;
+
+use crate::state::ProxyState;
+
+/// Pre-parsed `proxy.real_ip` config carried on [`ProxyState`] so the
+/// per-request extractor doesn't re-parse CIDRs on the hot path.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedRealIp {
+    pub trusted: Vec<IpNet>,
+    pub recursive: bool,
+    pub header: String,
+}
+
+impl ResolvedRealIp {
+    /// Build from validated config. CIDRs are already validated at config
+    /// load (`Config::validate`); a malformed entry here degrades to
+    /// "trust nothing" rather than panicking on the request path.
+    pub fn from_config(cfg: &RealIpConfig) -> Self {
+        Self {
+            trusted: cfg.parse_trusted().unwrap_or_default(),
+            recursive: cfg.recursive,
+            header: cfg.header.clone(),
+        }
+    }
+}
+
+/// nginx `set_real_ip_from` + `real_ip_recursive` equivalent.
+///
+/// - `peer`      – TCP peer address (from `ConnectInfo`).
+/// - `forwarded` – parsed forwarded-header list, left-to-right as received.
+/// - `trusted`   – pre-parsed trusted-proxy CIDRs.
+/// - `recursive` – nginx `real_ip_recursive` on/off.
+pub fn resolve_client_ip(
+    peer: IpAddr,
+    forwarded: &[IpAddr],
+    trusted: &[IpNet],
+    recursive: bool,
+) -> IpAddr {
+    let is_trusted = |ip: &IpAddr| trusted.iter().any(|n| n.contains(ip));
+    // nginx only rewrites $remote_addr when the connection itself comes
+    // from a trusted proxy. An untrusted peer IS the client.
+    if !is_trusted(&peer) {
+        return peer;
+    }
+    if recursive {
+        // Walk right-to-left; the first untrusted address is the client.
+        for ip in forwarded.iter().rev() {
+            if !is_trusted(ip) {
+                return *ip;
+            }
+        }
+        // Every forwarded entry trusted (or list empty): leftmost, else peer.
+        forwarded.first().copied().unwrap_or(peer)
+    } else {
+        // Non-recursive: the rightmost forwarded entry (the address
+        // immediately upstream of the trusted peer). Empty list → peer.
+        forwarded.last().copied().unwrap_or(peer)
+    }
+}
+
+/// Parse the configured forwarded header into a left-to-right IP list.
+/// Concatenates every header field instance (a client may send several)
+/// in received order, splits each on `,`, trims whitespace, strips an
+/// optional `:port` (or `[v6]:port`) suffix, and skips tokens that don't
+/// parse as an IP. Using `get_all` (not `get`) so a spoofed extra
+/// `x-forwarded-for` field can't hide entries from the trusted-proxy walk.
+fn parse_forwarded(headers: &axum::http::HeaderMap, header: &str) -> Vec<IpAddr> {
+    headers
+        .get_all(header)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|raw| raw.split(','))
+        .filter_map(|tok| parse_forwarded_token(tok.trim()))
+        .collect()
+}
+
+fn parse_forwarded_token(tok: &str) -> Option<IpAddr> {
+    if tok.is_empty() {
+        return None;
+    }
+    // Bracketed IPv6, optionally with a port: `[::1]` or `[::1]:443`.
+    if let Some(rest) = tok.strip_prefix('[') {
+        let inner = rest.split(']').next().unwrap_or("");
+        return inner.parse().ok();
+    }
+    // Bare address first; fall back to stripping a single `:port` (IPv4
+    // or hostname:port form). A bare IPv6 contains multiple colons and
+    // parses directly, so only strip when there's exactly one colon.
+    if let Ok(ip) = tok.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if tok.matches(':').count() == 1 {
+        if let Some((host, _port)) = tok.rsplit_once(':') {
+            return host.parse().ok();
+        }
+    }
+    None
+}
+
+/// Header carrying request-scoped routing tags for tag/metadata-conditional
+/// routing (comma-separated). Read out-of-band from the request headers so the
+/// tags never reach the upstream request body.
+pub const ROUTING_TAGS_HEADER: &str = "x-sibylhub-routing-tags";
+
+/// Per-request client attribution. Resolved once via the extractor and
+/// threaded into the usage event by each handler's emit fn.
+#[derive(Debug, Clone, Default)]
+pub struct ClientContext {
+    pub source_ip: String,
+    pub user_agent: String,
+    /// Routing tags from [`ROUTING_TAGS_HEADER`], used to select among a
+    /// routing model's tagged targets. Empty when the header is absent.
+    pub routing_tags: Vec<String>,
+    /// Per-request correlation id, resolved from the [`RequestId`] the
+    /// `ensure_request_id` middleware stamped into the request extensions.
+    /// Handlers use it for both the usage event and the response header, so
+    /// the two always match. Falls back to a fresh id when the middleware
+    /// isn't in the chain (e.g. a handler unit test with a bare router).
+    pub request_id: String,
+    /// The request's inbound headers, kept so dispatch can honour a
+    /// ProviderKey's `request.forward_client_headers` allowlist
+    /// (AISIX-Cloud#1167). Held behind an `Arc` because every dispatch
+    /// path clones the context; nothing here is forwarded unless an
+    /// operator names the header.
+    pub headers: Arc<HeaderMap>,
+    /// The authenticated caller, for `${request.api_key.*}` header
+    /// templates (AISIX-Cloud#1112). Read from the request extension the
+    /// [`crate::auth::AuthenticatedKey`] extractor publishes, so it is
+    /// filled only when that extractor ran first — which every handler
+    /// arranges by declaring `auth` before `client`. Default (empty) on
+    /// the unauthenticated paths; those resolve no `api_key` variable.
+    pub caller: sibyl_gateway_hub::CallerIdentity,
+    /// The verified JWT identity behind the request, for usage
+    /// attribution (AISIX-Cloud#564). Published by the same auth
+    /// extractor; `None` when the request authenticated with the key's
+    /// plaintext.
+    pub jwt: Option<Arc<crate::auth::JwtIdentity>>,
+    /// The request's trace identity (AISIX-Cloud#1279), minted by
+    /// `ensure_request_id` beside the [`RequestId`]. Handlers thread it
+    /// into their attempt telemetry and usage-event emission so every
+    /// exported span of the request shares one trace. `None` only when
+    /// the middleware isn't in the chain (a handler unit test with a
+    /// bare router) — emission then falls back to the legacy flat span.
+    pub trace: Option<Arc<sibyl_gateway_obs::RequestTraceBundle>>,
+}
+
+/// Resolve the caller's address from the peer plus the trusted-proxy
+/// configuration. Shared with the auth extractor, which needs it before
+/// `ClientContext` runs so a rejected credential can still name its source.
+/// Empty when the request carries no `ConnectInfo` (oneshot tests).
+pub(crate) fn source_ip_from_parts(parts: &Parts, cfg: &ResolvedRealIp) -> String {
+    parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip())
+        .map(|peer| {
+            let forwarded = parse_forwarded(&parts.headers, &cfg.header);
+            resolve_client_ip(peer, &forwarded, &cfg.trusted, cfg.recursive).to_string()
+        })
+        .unwrap_or_default()
+}
+
+#[axum::async_trait]
+impl<S> FromRequestParts<S> for ClientContext
+where
+    S: Send + Sync,
+    ProxyState: FromRef<S>,
+{
+    // Never reject: a missing peer / User-Agent degrades to empty rather
+    // than failing the request (matches the wire's omit-when-empty
+    // semantics and keeps oneshot tests without ConnectInfo green).
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let proxy_state = ProxyState::from_ref(state);
+        let cfg = &proxy_state.real_ip;
+
+        let source_ip = source_ip_from_parts(parts, cfg);
+
+        let user_agent = parts
+            .headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| crate::chat::sanitize_tag(s.to_string()))
+            .unwrap_or_default();
+
+        let routing_tags = parts
+            .headers
+            .get(ROUTING_TAGS_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(parse_routing_tags)
+            .unwrap_or_default();
+
+        let request_id = parts
+            .extensions
+            .get::<crate::request_id::RequestId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_else(crate::request_id::new_request_id);
+
+        let api_key = parts
+            .extensions
+            .get::<Arc<sibyl_gateway_core::ResourceEntry<sibyl_gateway_core::ApiKey>>>();
+
+        let ctx = ClientContext {
+            source_ip,
+            user_agent,
+            routing_tags,
+            request_id,
+            headers: Arc::new(parts.headers.clone()),
+            caller: api_key
+                .map(|e| sibyl_gateway_hub::CallerIdentity::from_entry(e))
+                .unwrap_or_default(),
+            jwt: parts
+                .extensions
+                .get::<Arc<crate::auth::JwtIdentity>>()
+                .cloned(),
+            trace: parts
+                .extensions
+                .get::<Arc<sibyl_gateway_obs::RequestTraceBundle>>()
+                .cloned(),
+        };
+        // Hand the caller to the request's attribution cell as well
+        // (AISIX-Cloud#1571). This extractor is the one place every
+        // client-facing handler resolves who is calling, so it is also the
+        // one place that can hand it to the cancel guard — which emits the
+        // request's usage events when the handler future is dropped before
+        // it can. The api_key id comes from the same extension the `caller`
+        // above does, so the two cannot disagree.
+        crate::attribution::note_client(&ctx, api_key.map(|e| e.id.as_str()).unwrap_or_default());
+        Ok(ctx)
+    }
+}
+
+/// Split a comma-separated routing-tags header into trimmed, non-empty tags.
+fn parse_routing_tags(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `source_ip` — as resolved by the real-ip chain above, never a
+/// raw caller-supplied header — falls inside one of `cidrs`.
+///
+/// An unparseable source IP is OUT: callers gate access on this, so a
+/// peer address the proxy could not resolve must not pass an allowlist.
+/// An unparseable CIDR entry is skipped rather than opening the list.
+/// An EMPTY list is also out — "allowlist everything" has to be spelled
+/// by the caller (passthrough routes treat an unset list as
+/// unrestricted; the MCP anonymous block requires a non-empty one), so
+/// this primitive never has to guess which of the two an empty list means.
+pub(crate) fn ip_in_cidrs(source_ip: &str, cidrs: &[String]) -> bool {
+    let Ok(ip) = source_ip.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    cidrs
+        .iter()
+        .filter_map(|cidr| cidr.parse::<ipnet::IpNet>().ok())
+        .any(|net| net.contains(&ip))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cidr_match_is_closed_on_bad_input() {
+        let cidrs = vec!["10.0.0.0/8".to_string(), "2001:db8::/32".to_string()];
+        assert!(super::ip_in_cidrs("10.1.2.3", &cidrs));
+        assert!(super::ip_in_cidrs("2001:db8::5", &cidrs));
+        assert!(!super::ip_in_cidrs("192.0.2.1", &cidrs));
+        // Unresolvable source, empty list, and a malformed entry all
+        // fail closed rather than passing the allowlist.
+        assert!(!super::ip_in_cidrs("", &cidrs));
+        assert!(!super::ip_in_cidrs("not-an-ip", &cidrs));
+        assert!(!super::ip_in_cidrs("10.1.2.3", &[]));
+        assert!(!super::ip_in_cidrs("10.1.2.3", &["nonsense".to_string()]));
+    }
+
+    use super::*;
+
+    fn nets(cidrs: &[&str]) -> Vec<IpNet> {
+        cidrs.iter().map(|s| s.parse().unwrap()).collect()
+    }
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn parse_routing_tags_splits_trims_and_drops_empties() {
+        assert_eq!(
+            parse_routing_tags("eu, premium ,,us"),
+            vec!["eu", "premium", "us"]
+        );
+        assert!(parse_routing_tags("").is_empty());
+        assert!(parse_routing_tags("  ,  ").is_empty());
+    }
+
+    #[test]
+    fn untrusted_peer_is_the_client_and_xff_is_ignored() {
+        let peer = ip("203.0.113.9");
+        let fwd = [ip("1.2.3.4")];
+        let trusted = nets(&["10.0.0.0/8"]);
+        assert_eq!(resolve_client_ip(peer, &fwd, &trusted, true), peer);
+    }
+
+    #[test]
+    fn trusted_peer_recursive_returns_first_untrusted_from_right() {
+        // XFF as received: client, edge, internal-lb. peer = internal-lb.
+        let peer = ip("10.0.0.1");
+        let fwd = [ip("203.0.113.7"), ip("10.0.0.2"), ip("10.0.0.3")];
+        let trusted = nets(&["10.0.0.0/8"]);
+        assert_eq!(
+            resolve_client_ip(peer, &fwd, &trusted, true),
+            ip("203.0.113.7")
+        );
+    }
+
+    #[test]
+    fn trusted_peer_non_recursive_returns_rightmost_entry() {
+        let peer = ip("10.0.0.1");
+        let fwd = [ip("203.0.113.7"), ip("198.51.100.4")];
+        let trusted = nets(&["10.0.0.0/8"]);
+        assert_eq!(
+            resolve_client_ip(peer, &fwd, &trusted, false),
+            ip("198.51.100.4")
+        );
+    }
+
+    #[test]
+    fn trusted_peer_all_forwarded_trusted_recursive_falls_back_to_leftmost() {
+        let peer = ip("10.0.0.1");
+        let fwd = [ip("10.0.0.9"), ip("10.0.0.8")];
+        let trusted = nets(&["10.0.0.0/8"]);
+        assert_eq!(
+            resolve_client_ip(peer, &fwd, &trusted, true),
+            ip("10.0.0.9")
+        );
+    }
+
+    #[test]
+    fn trusted_peer_empty_forwarded_falls_back_to_peer() {
+        let peer = ip("10.0.0.1");
+        let trusted = nets(&["10.0.0.0/8"]);
+        assert_eq!(resolve_client_ip(peer, &[], &trusted, true), peer);
+        assert_eq!(resolve_client_ip(peer, &[], &trusted, false), peer);
+    }
+
+    #[test]
+    fn ipv6_peer_and_forwarded_resolve() {
+        let peer = ip("::1");
+        let fwd = [ip("2001:db8::1")];
+        let trusted = nets(&["::1/128"]);
+        assert_eq!(
+            resolve_client_ip(peer, &fwd, &trusted, true),
+            ip("2001:db8::1")
+        );
+    }
+
+    #[test]
+    fn header_parser_handles_whitespace_ports_and_garbage() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            "x-forwarded-for",
+            "203.0.113.7:1234, garbage, 198.51.100.4 , [2001:db8::1]:443"
+                .parse()
+                .unwrap(),
+        );
+        let parsed = parse_forwarded(&h, "x-forwarded-for");
+        assert_eq!(
+            parsed,
+            vec![ip("203.0.113.7"), ip("198.51.100.4"), ip("2001:db8::1")]
+        );
+    }
+
+    #[test]
+    fn header_parser_absent_header_is_empty() {
+        let h = axum::http::HeaderMap::new();
+        assert!(parse_forwarded(&h, "x-forwarded-for").is_empty());
+    }
+
+    #[test]
+    fn header_parser_concatenates_multiple_header_fields_in_order() {
+        // A client may send several x-forwarded-for fields; all must be
+        // parsed in received order so a spoofed extra field can't hide
+        // entries from the trusted-proxy walk.
+        let mut h = axum::http::HeaderMap::new();
+        h.append("x-forwarded-for", "203.0.113.7, 10.0.0.1".parse().unwrap());
+        h.append("x-forwarded-for", "10.0.0.2".parse().unwrap());
+        let parsed = parse_forwarded(&h, "x-forwarded-for");
+        assert_eq!(
+            parsed,
+            vec![ip("203.0.113.7"), ip("10.0.0.1"), ip("10.0.0.2")]
+        );
+    }
+}

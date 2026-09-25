@@ -1,0 +1,42 @@
+[package]
+name = "sibyl-gateway-provider-azure-openai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway: Azure OpenAI Service provider bridge (skeleton — deployment-keyed dispatch)"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
+# Azure OpenAI's chat-completions wire shape is the OpenAI shape with
+# a different URL pattern + auth header + a tolerated `content_filter_results`
+# extension field. We reuse `sibyl-gateway-provider-openai`'s typed wire structs
+# (`OpenAiResponse` / `OpenAiStreamChunk`) and override apply helpers
+# (param_renames / default_headers / etc.) instead of re-implementing
+# them — keeping a single source of truth for the OpenAI JSON contract.
+sibyl-gateway-provider-openai = { path = "../sibyl-gateway-provider-openai" }
+async-trait.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-stream = "0.3"
+bytes.workspace = true
+http.workspace = true
+
+[dev-dependencies]
+# Only for the strict-structured-output test: the `/v1/messages` inbound
+# translation lives in the Anthropic crate, and this edge must emit for
+# it exactly what the OpenAI edge does.
+sibyl-gateway-provider-anthropic = { path = "../sibyl-gateway-provider-anthropic" }
+# `net` + `io-util` back the hand-rolled SSE upstream in
+# `chat_stream_delivers_a_long_stream_whose_gaps_stay_within_budget`, which
+# needs to emit frames on a schedule — wiremock can only delay a response as
+# a whole, so it cannot distinguish per-chunk from total-duration timeouts.
+tokio = { workspace = true, features = ["macros", "rt", "time", "net", "io-util"] }
+wiremock.workspace = true

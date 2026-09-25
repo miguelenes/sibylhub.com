@@ -22,4 +22,5 @@ apps/web/.astro/
 apps/web/.cloudflare/
 apps/web/wrangler.local.json
 apps/backoffice/public/build/
+apps/docs/.docusaurus/
 packages/schemas/generated/

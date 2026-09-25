@@ -1,0 +1,2586 @@
+//! Inbound OIDC/JWT authentication (AISIX-Cloud#1080, #1081).
+//!
+//! When the environment has at least one enabled [`OidcProvider`], a bearer
+//! token that is a JWT is authenticated here instead of the API-key hash
+//! lookup: a trust provider is selected, the signature is verified against
+//! that provider's key material, the registered claims (`exp` required,
+//! `aud` against the provider's accepted audiences, `nbf` when present)
+//! and the provider's `required_scopes` / `bound_claims` are enforced, and
+//! the value of the provider's `identity_claim` selects the API key whose
+//! `jwt_subject` equals it. The request then proceeds as that key — its
+//! `allowed_models`, rate limits, budget, and usage attribution all apply
+//! unchanged.
+//!
+//! A provider verifies in one of two modes, derived from the row rather
+//! than declared by it (`OidcProvider::hmac_secret`):
+//!
+//! - **JWKS mode** — asymmetric signatures verified against keys fetched
+//!   from `jwks_uri` or resolved through OIDC discovery, cached, with a
+//!   rate-limited refresh when an unknown `kid` appears so key rotation
+//!   needs no restart. `issuer` and `audiences` are mandatory.
+//! - **HMAC mode** — `HS256`/`HS384`/`HS512` verified against the
+//!   provider's shared secret. Nothing is fetched. `issuer` and
+//!   `audiences` are optional: set, each is enforced exactly as in JWKS
+//!   mode; unset, the corresponding claim is not consulted.
+//!
+//! Provider selection:
+//!
+//! 1. A token whose `iss` equals an enabled provider's `issuer` is
+//!    verified against **that provider and no other** — a mode or
+//!    algorithm mismatch there is a denial, never a fallback.
+//! 2. Otherwise (no `iss`, or one matching nothing) the candidates are
+//!    the enabled HMAC-mode providers that declare no `issuer`, every
+//!    one of them, tried in a deterministic order; the first whose
+//!    verification succeeds wins. JWKS-mode providers are never trial
+//!    candidates — every one of them pins an issuer.
+//!
+//! Design invariants:
+//!
+//! - **No fallback**: once a token is JWT-shaped and JWT auth is enabled,
+//!   a validation failure is final — it is never retried as an API key.
+//! - **Issuer allow-list**: a JWT whose `iss` names a trust provider is
+//!   bound to it; one that names none reaches only the issuer-less
+//!   shared-secret providers, and nothing else is a catch-all.
+//! - **Default deny**: `exp` is required on every token, as are `iss` and
+//!   `aud` wherever the selected provider pins them; a missing identity
+//!   claim or an unmapped identity is a rejection, never an anonymous
+//!   pass.
+//! - **The signature family is pinned per provider**: a JWKS-mode
+//!   provider accepts only [`ALLOWED_ALGS`] and an HMAC-mode one only
+//!   [`HMAC_ALGS`], checked against the JOSE header before any key
+//!   material is built. A public JWKS can therefore never be confused
+//!   into acting as a shared secret, and a shared secret can never be
+//!   presented as a public key.
+//! - Every decision (allow and deny, API-key and JWT path alike) is
+//!   recorded on the `sibyl_gateway_auth_decisions_total` metric, and denials are
+//!   logged under `target: "sibyl-gateway::auth"` with the detailed reason class —
+//!   neither the raw token nor a provider's shared secret is ever logged.
+
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{Duration, Instant};
+
+use base64::Engine;
+use jsonwebtoken::jwk::JwkSet;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
+use sibyl_gateway_core::models::{
+    BoundClaimExpect, ClaimMapping, ClaimMatch, ClaimMatchOp, OidcProvider,
+};
+use sibyl_gateway_core::resource::ResourceEntry;
+use sibyl_gateway_core::{ApiKey, GatewaySnapshot};
+
+use crate::auth::{AuthenticatedKey, JwtIdentity};
+use crate::error::ProxyError;
+use crate::state::ProxyState;
+
+/// How long a fetched JWKS (and a discovery-resolved JWKS URL) stays fresh.
+const JWKS_TTL: Duration = Duration::from_secs(600);
+
+/// Minimum interval between fetches for one JWKS URL outside the TTL
+/// schedule — bounds both the unknown-`kid` refresh (a token signed by a
+/// just-rotated key triggers at most one refetch per interval, so rotation
+/// is picked up within a second while a stream of garbage `kid`s cannot
+/// flood the identity provider) and retries after a failed fetch.
+const JWKS_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Per-request deadline for JWKS / discovery fetches.
+const JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Cap on a JWKS / discovery response body. A real JWKS is a few KB; the
+/// cap keeps a misconfigured URL (pointing at some arbitrary endpoint)
+/// from ballooning memory.
+const JWKS_MAX_BYTES: usize = 512 * 1024;
+
+/// Verification algorithms accepted on inbound JWTs: the asymmetric
+/// families only. HMAC is deliberately excluded — accepting it would let
+/// a public JWKS double as a shared signing secret (algorithm-confusion).
+const ALLOWED_ALGS: [Algorithm; 9] = [
+    Algorithm::RS256,
+    Algorithm::RS384,
+    Algorithm::RS512,
+    Algorithm::PS256,
+    Algorithm::PS384,
+    Algorithm::PS512,
+    Algorithm::ES256,
+    Algorithm::ES384,
+    Algorithm::EdDSA,
+];
+
+/// Verification algorithms accepted by an HMAC-mode provider: the
+/// shared-secret families only, mirroring [`ALLOWED_ALGS`]. The two
+/// lists are disjoint, and which one applies is decided by the selected
+/// provider before any key material exists — that is what makes
+/// algorithm confusion structurally impossible rather than merely
+/// checked.
+const HMAC_ALGS: [Algorithm; 3] = [Algorithm::HS256, Algorithm::HS384, Algorithm::HS512];
+
+/// Upper bound on a bearer we will treat as a JWT. A real IdP token is a
+/// few KB; the cap stops a several-hundred-KB `Authorization` header from
+/// driving the base64/JSON work (done up to three times per request)
+/// before anything is verified.
+const MAX_JWT_BYTES: usize = 16 * 1024;
+
+/// True when the bearer has the structural shape of a JWT: within the
+/// size cap, three non-empty dot-separated segments whose first segment
+/// base64url-decodes to a JSON object carrying `alg` (a JOSE header). The
+/// header check keeps custom-imported API keys that merely contain dots
+/// on the API-key path.
+pub(crate) fn looks_like_jwt(token: &str) -> bool {
+    if token.len() > MAX_JWT_BYTES {
+        return false;
+    }
+    // Exactly three non-empty segments — checked on the iterator so the
+    // per-request path allocates nothing.
+    let mut parts = token.splitn(4, '.');
+    let (Some(header), Some(payload), Some(sig), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    if header.is_empty() || payload.is_empty() || sig.is_empty() {
+        return false;
+    }
+    matches!(b64url_json(header), Some(v) if v.get("alg").is_some())
+}
+
+/// True when the snapshot has at least one enabled trust provider — the
+/// gate for entering the JWT path at all. O(1) on deployments with no
+/// providers configured (the common case).
+pub(crate) fn any_enabled_provider(snapshot: &GatewaySnapshot) -> bool {
+    !snapshot.oidc_providers.is_empty() && snapshot.oidc_providers.any(|e| e.value.enabled)
+}
+
+/// True when the snapshot has at least one enabled provider that
+/// verifies against a fetched key set — the gate for the OAuth
+/// protected-resource surface, which exists to name authorization
+/// servers a client can go and get a token from. A shared-secret
+/// provider has none to name: its callers are issued their tokens out
+/// of band, so it is not advertised and cannot on its own bring the
+/// discovery surface up.
+pub(crate) fn any_enabled_jwks_provider(snapshot: &GatewaySnapshot) -> bool {
+    !snapshot.oidc_providers.is_empty()
+        && snapshot
+            .oidc_providers
+            .any(|e| e.value.enabled && e.value.is_jwks_mode())
+}
+
+fn b64url_json(segment: &str) -> Option<serde_json::Value> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(segment)
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Unverified peek at the payload's `iss`, used only to select the trust
+/// provider. The selected provider's issuer is then pinned in the real
+/// validation, so a forged `iss` still has to survive signature and
+/// issuer verification against that provider's keys.
+fn unverified_issuer(token: &str) -> Option<String> {
+    let payload = token.split('.').nth(1)?;
+    b64url_json(payload)?
+        .get("iss")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Which enabled provider an `iss` selects.
+///
+/// [`Ambiguous`](ProviderMatch::Ambiguous) is deliberately NOT the same
+/// answer as [`None`](ProviderMatch::None): an ambiguous issuer is one a
+/// provider DOES claim, so it must fail closed rather than fall through
+/// to the issuer-less shared-secret candidates, which would hand the
+/// request to a provider whose policy the token was never meant to be
+/// judged by.
+enum ProviderMatch {
+    /// Exactly one enabled provider claims this issuer.
+    One(Arc<ResourceEntry<OidcProvider>>),
+    /// No enabled provider claims it.
+    None,
+    /// Two or more do.
+    Ambiguous,
+}
+
+/// The enabled provider matching `iss`. Fails closed on ambiguity: if
+/// two enabled providers claim the same issuer their audience/scope/
+/// claim policies differ, so silently picking one would apply the wrong
+/// policy — the request is denied instead. The control plane enforces
+/// per-environment issuer uniqueness and the file loader rejects
+/// duplicates, so this only guards a transient etcd race or a CP bug.
+fn provider_for_issuer(snapshot: &GatewaySnapshot, iss: &str) -> ProviderMatch {
+    let (found, ambiguous) = snapshot
+        .oidc_providers
+        .find_unique_by(|e| e.value.enabled && e.value.issuer.as_deref() == Some(iss));
+    if ambiguous {
+        tracing::warn!(
+            target: "sibyl-gateway::auth",
+            issuer = %clip(iss),
+            "two enabled OIDC providers claim this issuer; failing closed — \
+             their policies differ and neither can be chosen unambiguously",
+        );
+        return ProviderMatch::Ambiguous;
+    }
+    match found {
+        Some(entry) => ProviderMatch::One(entry),
+        None => ProviderMatch::None,
+    }
+}
+
+/// Every enabled HMAC-mode provider that pins no `issuer`, in a total
+/// order (`name`, then id) so the same token resolves the same provider
+/// on every replica and across snapshot updates.
+///
+/// The list is not capped. How many providers a token is tried against
+/// is set by the operator, not by the caller, and one HMAC verification
+/// costs tens of microseconds at the [`MAX_JWT_BYTES`] token cap — so
+/// the trial is N times that — whereas dropping the tail would leave a
+/// provider that loads, reports accepted, and authenticates nobody.
+///
+/// These are the only providers a token whose `iss` names nothing can
+/// reach. A JWKS-mode provider is never here — `issuer` is mandatory in
+/// that mode, so one always selects by issuer — and neither is an HMAC
+/// provider that pinned an issuer: pinning one is a statement that only
+/// tokens carrying it belong to this provider.
+///
+/// Two issuer-less providers holding the SAME secret are
+/// indistinguishable by construction — nothing in the token says which
+/// one minted it — so every such token binds to whichever sorts first,
+/// and the other's `required_scopes` / `bound_claims` / key bindings
+/// never apply. Give each provider its own secret, or pin an issuer.
+fn issuerless_hmac_providers(snapshot: &GatewaySnapshot) -> Vec<Arc<ResourceEntry<OidcProvider>>> {
+    let mut candidates: Vec<_> = snapshot
+        .oidc_providers
+        .entries()
+        .into_iter()
+        .filter(|e| e.value.enabled && e.value.issuer.is_none() && e.value.hmac_secret().is_some())
+        .collect();
+    candidates.sort_by(|a, b| {
+        (a.value.name.as_str(), a.id.as_str()).cmp(&(b.value.name.as_str(), b.id.as_str()))
+    });
+    candidates
+}
+
+/// The failure reported when no trial candidate accepted a token.
+///
+/// A candidate that does not hold the token's key fails on the
+/// SIGNATURE, and it fails that way for every token — so that reason
+/// says nothing about the token itself and must not shadow the one
+/// candidate that did verify it and then rejected a claim. Keeping the
+/// first signature-class failure only as a fallback is what stops an
+/// expired token reading as `jwt_invalid` (and an SDK's refresh branch
+/// never firing) purely because some other provider sorts first.
+#[derive(Default)]
+struct TrialFailure {
+    /// First failure from a candidate whose signature check passed.
+    claim: Option<(&'static str, ProxyError)>,
+    /// First failure of any kind, in candidate order.
+    any: Option<(&'static str, ProxyError)>,
+}
+
+impl TrialFailure {
+    fn record(&mut self, failure: (&'static str, ProxyError)) {
+        // These two are the reasons a candidate rejects a token it was
+        // never holding the key for; everything else means the signature
+        // verified and a claim did not.
+        let signature_class = matches!(failure.0, "jwt_bad_signature" | "jwt_alg_not_allowed");
+        if !signature_class && self.claim.is_none() {
+            self.claim = Some(failure);
+        } else if self.any.is_none() {
+            self.any = Some(failure);
+        }
+    }
+
+    fn into_reported(self) -> Option<(&'static str, ProxyError)> {
+        self.claim.or(self.any)
+    }
+}
+
+/// Verify a token's signature and registered claims against one
+/// provider, in whichever mode that provider is configured for.
+///
+/// The algorithm check comes first and is per mode, so the key material
+/// built afterwards can only ever be of the family the header already
+/// named — a JWKS is never handed to an HMAC verifier, and a shared
+/// secret is never handed to an asymmetric one.
+async fn verify_against_provider(
+    prov: &OidcProvider,
+    token: &str,
+    header: &jsonwebtoken::Header,
+) -> Result<serde_json::Value, (&'static str, ProxyError)> {
+    let Some(secret) = prov.hmac_secret() else {
+        return verify_against_jwks(prov, token, header).await;
+    };
+    if !HMAC_ALGS.contains(&header.alg) {
+        return Err(("jwt_alg_not_allowed", ProxyError::JwtInvalid));
+    }
+    // One secret per provider, so no `kid` is consulted: a shared-secret
+    // provider has exactly one key and a token naming some other one is
+    // simply verified against the secret and fails on the signature.
+    let key = DecodingKey::from_secret(secret.as_bytes());
+    validate_with_keys(token, header.alg, prov, std::slice::from_ref(&key))
+}
+
+/// The JWKS-mode half of [`verify_against_provider`]: resolve the key
+/// endpoint, fetch the key set (cached, with one rate-limited refresh
+/// for an unknown `kid`), and verify against the candidate keys.
+async fn verify_against_jwks(
+    prov: &OidcProvider,
+    token: &str,
+    header: &jsonwebtoken::Header,
+) -> Result<serde_json::Value, (&'static str, ProxyError)> {
+    if !ALLOWED_ALGS.contains(&header.alg) {
+        return Err(("jwt_alg_not_allowed", ProxyError::JwtInvalid));
+    }
+    let kid = header.kid.as_deref();
+    let jwks_url = match resolve_jwks_url(prov).await {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(
+                target: "sibyl-gateway::auth",
+                provider = %prov.name,
+                error = %e,
+                "cannot resolve the trust provider's JWKS endpoint",
+            );
+            return Err(("jwks_unavailable", ProxyError::JwksUnavailable));
+        }
+    };
+    let jwks = match get_jwks(&jwks_url).await {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::warn!(
+                target: "sibyl-gateway::auth",
+                provider = %prov.name,
+                error = %e,
+                "cannot fetch the trust provider's JWKS",
+            );
+            return Err(("jwks_unavailable", ProxyError::JwksUnavailable));
+        }
+    };
+
+    let mut candidates = candidate_keys(&jwks, kid, header.alg);
+    if candidates.is_empty() {
+        // Unknown (or absent-yet-unmatched) kid: the identity provider may
+        // have just rotated its keys — refetch once, rate-limited.
+        if let Some(fresh) = refresh_jwks_rate_limited(&jwks_url).await {
+            candidates = candidate_keys(&fresh, kid, header.alg);
+        }
+    }
+    if candidates.is_empty() {
+        return Err(("jwt_unknown_kid", ProxyError::JwtInvalid));
+    }
+    validate_with_keys(token, header.alg, prov, &candidates)
+}
+
+/// The API key bound to `subject` **as asserted by `provider_name`**,
+/// plus whether the binding was ambiguous. A key whose `jwt_provider`
+/// names a different trust provider is never a candidate: subjects are
+/// namespaced by the provider that vouched for them, so a second
+/// trusted provider cannot mint a token impersonating the first
+/// provider's identity of the same name. Ambiguity (two keys sharing
+/// one binding) is surfaced to the caller so it can fail closed rather
+/// than fall through to the claim mappings — the CP enforces
+/// `(jwt_provider, jwt_subject)` uniqueness and the file loader rejects
+/// duplicates, so this only guards a transient race.
+fn key_for_subject(
+    index: &crate::jwt_index::LiveJwtBindings,
+    snapshot: &GatewaySnapshot,
+    provider_name: &str,
+    subject: &str,
+) -> (Option<Arc<ResourceEntry<ApiKey>>>, bool) {
+    let (found, ambiguous) = index.resolve(&snapshot.apikeys, provider_name, subject);
+    // Ambiguity is not logged here: the caller's `deny` site carries the
+    // full request context (issuer, subject, route, source ip) in one line.
+    (found, ambiguous)
+}
+
+/// The highest-priority enabled claim mapping for `provider_name` whose
+/// conditions all hold against the verified claims. Candidates are
+/// ordered by `(priority, name, id)` — a total order, so evaluation is
+/// deterministic across replicas and across snapshot updates even if a
+/// control-plane bug ever produced duplicate names — and the same token
+/// always resolves the same mapping.
+fn matching_claim_mapping(
+    snapshot: &GatewaySnapshot,
+    provider_name: &str,
+    claims: &serde_json::Value,
+) -> Option<Arc<ResourceEntry<ClaimMapping>>> {
+    let mut candidates: Vec<_> = snapshot
+        .claim_mappings
+        .entries()
+        .into_iter()
+        .filter(|e| e.value.enabled && e.value.jwt_provider == provider_name)
+        .collect();
+    candidates.sort_by(|a, b| {
+        (a.value.priority, a.value.name.as_str(), a.id.as_str()).cmp(&(
+            b.value.priority,
+            b.value.name.as_str(),
+            b.id.as_str(),
+        ))
+    });
+    candidates
+        .into_iter()
+        .find(|e| e.value.match_.iter().all(|m| claim_match_holds(claims, m)))
+}
+
+/// Whether one claim condition holds. A missing claim, or a claim whose
+/// JSON type does not fit the operator, never matches (default deny):
+/// `exact` requires a string claim equal to one of the accepted values,
+/// `contains` an array of strings containing one of them.
+fn claim_match_holds(claims: &serde_json::Value, m: &ClaimMatch) -> bool {
+    let Some(actual) = nested_claim(claims, &m.claim) else {
+        return false;
+    };
+    match m.op {
+        ClaimMatchOp::Exact => actual
+            .as_str()
+            .is_some_and(|s| m.values.iter().any(|v| v == s)),
+        ClaimMatchOp::Contains => actual.as_array().is_some_and(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|s| m.values.iter().any(|v| v == s))
+        }),
+    }
+}
+
+/// Authenticate a JWT-shaped bearer. Called from the auth choke point
+/// once [`looks_like_jwt`] and [`any_enabled_provider`] both hold, with
+/// the snapshot the gate already loaded (avoids a second atomic load;
+/// any change between them fails closed to `jwt_untrusted_issuer`).
+pub(crate) async fn authenticate_jwt(
+    state: &ProxyState,
+    snapshot: &GatewaySnapshot,
+    token: &str,
+    ctx: crate::auth::DenialContext<'_>,
+) -> Result<AuthenticatedKey, ProxyError> {
+    let d = Denier {
+        state,
+        ctx,
+        issuer_matched: true,
+    };
+    let header = match jsonwebtoken::decode_header(token) {
+        Ok(h) => h,
+        Err(_) => {
+            return Err(deny(
+                d,
+                "jwt_malformed",
+                "",
+                None,
+                None,
+                None,
+                ProxyError::JwtInvalid,
+            ))
+        }
+    };
+    let kid = header.kid.clone();
+    let iss = unverified_issuer(token);
+    let logged_iss = iss.clone().unwrap_or_default();
+
+    // ── Provider selection + signature + registered claims ───────────
+    // An `iss` that names a trust provider binds the token to it and to
+    // nothing else, whichever mode that provider is in: falling through
+    // to another provider after a mode or algorithm mismatch is exactly
+    // the confusion this path exists to prevent.
+    let (provider, claims) = match iss
+        .as_deref()
+        .map_or(ProviderMatch::None, |i| provider_for_issuer(snapshot, i))
+    {
+        ProviderMatch::One(provider) => {
+            match verify_against_provider(&provider.value, token, &header).await {
+                Ok(claims) => (provider, claims),
+                Err((reason, err)) => {
+                    return Err(deny(
+                        d,
+                        reason,
+                        &logged_iss,
+                        kid.as_deref(),
+                        None,
+                        None,
+                        err,
+                    ))
+                }
+            }
+        }
+        // An issuer two providers claim is still an issuer that was
+        // claimed: deny it rather than let it reach the issuer-less
+        // candidates, which is where the no-fallback rule would be lost.
+        ProviderMatch::Ambiguous => {
+            return Err(deny(
+                d,
+                "jwt_untrusted_issuer",
+                &logged_iss,
+                kid.as_deref(),
+                None,
+                None,
+                ProxyError::JwtInvalid,
+            ))
+        }
+        ProviderMatch::None => {
+            // No issuer, or one no provider claims. The shared-secret
+            // providers that pin no issuer are the only candidates; each
+            // is tried in turn and the first that verifies wins. With
+            // none configured this is exactly the pre-HMAC behavior: the
+            // token is denied on its issuer.
+            let candidates = issuerless_hmac_providers(snapshot);
+            let mut failure = TrialFailure::default();
+            let mut verified = None;
+            for provider in candidates {
+                match verify_against_provider(&provider.value, token, &header).await {
+                    Ok(claims) => {
+                        verified = Some((provider, claims));
+                        break;
+                    }
+                    Err(f) => failure.record(f),
+                }
+            }
+            match verified {
+                Some(pair) => pair,
+                None => {
+                    // With no candidate at all the token never reached a
+                    // verifier, and the denial names why it could not be
+                    // routed to one — the pre-HMAC reasons, unchanged.
+                    let (reason, err) = failure.into_reported().unwrap_or(if iss.is_none() {
+                        ("jwt_missing_issuer", ProxyError::JwtInvalid)
+                    } else {
+                        ("jwt_untrusted_issuer", ProxyError::JwtInvalid)
+                    });
+                    // Nothing here named a configured issuer, so this is
+                    // the scanner-probe shape however specific the reason
+                    // turned out to be: an unauthenticated bearer must not
+                    // be able to drive WARN volume (the reason is still
+                    // counted on `sibyl_gateway_auth_decisions_total`).
+                    return Err(deny(
+                        d.unmatched_issuer(),
+                        reason,
+                        &logged_iss,
+                        kid.as_deref(),
+                        None,
+                        None,
+                        err,
+                    ));
+                }
+            }
+        }
+    };
+    let prov = &provider.value;
+    let iss = logged_iss;
+
+    // ── Provider claim requirements ──────────────────────────────────
+    // Scope and bound-claim failures map to distinct errors: a scope
+    // failure may carry the `/mcp` `insufficient_scope` challenge
+    // (AISIX-Cloud#1143), a policy denial never does. Both render the
+    // same 403 on the wire.
+    if let Err(rejection) = check_provider_claims(&claims, prov) {
+        let (reason, err) = claims_rejection_error(rejection, prov);
+        return Err(deny(d, reason, &iss, kid.as_deref(), None, None, err));
+    }
+
+    // ── Identity mapping ─────────────────────────────────────────────
+    let Some(subject) = nested_claim(&claims, &prov.identity_claim).and_then(|v| v.as_str()) else {
+        return Err(deny(
+            d,
+            "jwt_identity_claim_missing",
+            &iss,
+            kid.as_deref(),
+            None,
+            None,
+            ProxyError::JwtIdentityUnmapped,
+        ));
+    };
+
+    // The direct `(jwt_provider, jwt_subject)` key binding is
+    // authoritative for its subject — including its disabled/expired
+    // lifecycle. Claim mappings only admit identities no key binds
+    // explicitly, so adding a mapping can never reroute (or re-enable)
+    // an identity an operator pinned to a specific key. An AMBIGUOUS
+    // binding fails closed here for the same reason: the subject *is*
+    // bound, just not resolvably, and letting it fall through to the
+    // mappings would hand a mis-provisioned identity whatever a rule
+    // grants.
+    let (bound, ambiguous) = key_for_subject(&state.jwt_bindings, snapshot, &prov.name, subject);
+    if ambiguous {
+        return Err(deny(
+            d,
+            "jwt_binding_ambiguous",
+            &iss,
+            kid.as_deref(),
+            Some(subject),
+            None,
+            ProxyError::JwtIdentityUnmapped,
+        ));
+    }
+    let (entry, claim_mapping) = match bound {
+        Some(entry) => (entry, None),
+        None => match matching_claim_mapping(snapshot, &prov.name, &claims) {
+            Some(mapping) => {
+                let Some(entry) = snapshot
+                    .apikeys
+                    .get_by_id(&mapping.value.resolve.api_key_id)
+                else {
+                    return Err(deny(
+                        d,
+                        "claim_mapping_target_missing",
+                        &iss,
+                        kid.as_deref(),
+                        Some(subject),
+                        Some(&mapping.value.name),
+                        ProxyError::JwtIdentityUnmapped,
+                    ));
+                };
+                (entry, Some(mapping.value.name.clone()))
+            }
+            None => {
+                return Err(deny(
+                    d,
+                    "jwt_identity_unmapped",
+                    &iss,
+                    kid.as_deref(),
+                    Some(subject),
+                    None,
+                    ProxyError::JwtIdentityUnmapped,
+                ));
+            }
+        },
+    };
+
+    // Same lifecycle enforcement as the API-key path (#933).
+    if entry.value.disabled {
+        return Err(deny(
+            d,
+            "key_disabled",
+            &iss,
+            kid.as_deref(),
+            None,
+            None,
+            ProxyError::ApiKeyDisabled,
+        ));
+    }
+    if entry.value.is_expired_at(chrono::Utc::now()) {
+        return Err(deny(
+            d,
+            "key_expired",
+            &iss,
+            kid.as_deref(),
+            None,
+            None,
+            ProxyError::ApiKeyExpired,
+        ));
+    }
+
+    state.metrics.record_auth_decision("jwt", true, "");
+    tracing::debug!(
+        target: "sibyl-gateway::auth",
+        method = "jwt",
+        provider = %prov.name,
+        issuer = %iss,
+        subject = %subject,
+        api_key_id = %entry.id,
+        claim_mapping = ?claim_mapping,
+        "jwt authentication succeeded",
+    );
+    Ok(AuthenticatedKey {
+        anonymous: false,
+        entry,
+        jwt: Some(Arc::new(JwtIdentity::new(
+            subject.to_string(),
+            prov.name.clone(),
+            claim_mapping,
+        ))),
+    })
+}
+
+/// Cap on attacker-controlled token metadata reproduced in the decision
+/// log. `kid`, and `iss` before the issuer allow-list matches, come
+/// straight from an unauthenticated token, so they are logged with
+/// `Debug` (which escapes newlines and control bytes) and truncated —
+/// a probe cannot forge log lines or inflate log volume through them.
+const LOGGED_METADATA_MAX: usize = 128;
+
+fn clip(s: &str) -> &str {
+    match s.char_indices().nth(LOGGED_METADATA_MAX) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
+
+/// Record a denial on the metric + decision log and hand back the error.
+/// The raw token never appears here — only the reason class and the
+/// token's routing metadata (issuer / kid), escaped and truncated.
+///
+/// Pre-allow-list reason classes (a malformed token, an untrusted or
+/// missing issuer) are the scanner-probe shapes: they carry no operator
+/// signal beyond the metric, so they log at `debug`. Once a trust
+/// provider has matched, a denial names a real configured issuer and is
+/// worth a `warn`.
+///
+/// A denial from the issuer-less trial path is the same probe shape
+/// whatever reason it ended on — the token named no configured issuer,
+/// so any unauthenticated bearer reaches it — and
+/// [`Denier::unmatched_issuer`] marks it so. Without that, configuring a
+/// single issuer-less shared-secret provider would turn every forged
+/// bearer on the internet into a `warn` line and bury the real
+/// `jwt_bad_signature` signal (a trusted issuer's token failing
+/// verification) that operators alert on.
+fn deny(
+    d: Denier<'_>,
+    reason: &'static str,
+    issuer: &str,
+    kid: Option<&str>,
+    subject: Option<&str>,
+    claim_mapping: Option<&str>,
+    err: ProxyError,
+) -> ProxyError {
+    let Denier {
+        state,
+        ctx,
+        issuer_matched,
+    } = d;
+    state.metrics.record_auth_decision("jwt", false, reason);
+    if logs_as_probe(issuer_matched, reason) {
+        tracing::debug!(
+            target: "sibyl-gateway::auth",
+            method = "jwt",
+            reason = %reason,
+            issuer = ?clip(issuer),
+            kid = ?clip(kid.unwrap_or("")),
+            http_method = %ctx.method,
+            path = %ctx.path,
+            request_id = %ctx.request_id,
+            source_ip = %ctx.source_ip.resolve(),
+            "rejected inbound JWT (pre-verification)",
+        );
+    } else {
+        tracing::warn!(
+            target: "sibyl-gateway::auth",
+            method = "jwt",
+            reason = %reason,
+            issuer = ?clip(issuer),
+            kid = ?clip(kid.unwrap_or("")),
+            subject = ?subject.map(clip),
+            claim_mapping = ?claim_mapping.map(clip),
+            http_method = %ctx.method,
+            path = %ctx.path,
+            request_id = %ctx.request_id,
+            source_ip = %ctx.source_ip.resolve(),
+            "rejected inbound JWT",
+        );
+    }
+    err
+}
+
+/// Whether a denial is scanner-probe shaped and so belongs at `debug`
+/// rather than `warn`.
+///
+/// Two ways to qualify. The reason is one any malformed or unaddressed
+/// bearer produces before a trust provider is picked; or no configured
+/// issuer was named at all, which is the issuer-less trial path — there,
+/// every reason is reachable by an unauthenticated caller, so none of
+/// them is worth a log line an attacker can multiply.
+///
+/// Split out of [`deny`] so it can be pinned by a test: the whole point
+/// is a level, which leaves no other trace to assert on.
+fn logs_as_probe(issuer_matched: bool, reason: &str) -> bool {
+    !issuer_matched
+        || matches!(
+            reason,
+            "jwt_malformed" | "jwt_missing_issuer" | "jwt_untrusted_issuer" | "jwt_alg_not_allowed"
+        )
+}
+
+/// `state` + the request context every JWT denial line carries, bundled so
+/// the twelve `deny` sites stay one argument wide.
+#[derive(Clone, Copy)]
+struct Denier<'a> {
+    state: &'a ProxyState,
+    ctx: crate::auth::DenialContext<'a>,
+    /// Whether the token's `iss` named a configured trust provider. False
+    /// only on the issuer-less trial path, where any unauthenticated
+    /// bearer can reach the verifier and so no reason is worth a `warn`.
+    /// Defaults to true so a new `deny` site keeps the louder level
+    /// unless it opts out.
+    issuer_matched: bool,
+}
+
+impl<'a> Denier<'a> {
+    /// This denial came from the issuer-less trial path.
+    fn unmatched_issuer(self) -> Self {
+        Self {
+            issuer_matched: false,
+            ..self
+        }
+    }
+}
+
+/// Verify signature + registered claims against each candidate key.
+/// Signature/algorithm mismatches try the next key (rotation overlap with
+/// an absent `kid`); claim-level failures are final — they read the same
+/// for every key.
+fn validate_with_keys(
+    token: &str,
+    alg: Algorithm,
+    prov: &OidcProvider,
+    keys: &[DecodingKey],
+) -> Result<serde_json::Value, (&'static str, ProxyError)> {
+    let mut validation = Validation::new(alg);
+    // `aud`/`iss` are only checked when present — requiring them makes
+    // absence a rejection (default deny), alongside the always-required
+    // `exp`. A provider that pins neither (only possible in HMAC mode)
+    // must also stop `aud` being validated at all: left on with no
+    // accepted audiences, the library rejects every token that carries
+    // one, which is the opposite of ignoring the claim.
+    let mut required: Vec<&str> = vec!["exp"];
+    if let Some(issuer) = &prov.issuer {
+        validation.set_issuer(&[issuer]);
+        required.push("iss");
+    }
+    if prov.audiences.is_empty() {
+        validation.validate_aud = false;
+    } else {
+        validation.set_audience(&prov.audiences);
+        required.push("aud");
+    }
+    validation.set_required_spec_claims(&required);
+    validation.leeway = prov.leeway_secs;
+    validation.validate_nbf = true;
+
+    let mut last: Option<jsonwebtoken::errors::Error> = None;
+    for key in keys {
+        match jsonwebtoken::decode::<serde_json::Value>(token, key, &validation) {
+            Ok(data) => return Ok(data.claims),
+            Err(e) => {
+                use jsonwebtoken::errors::ErrorKind;
+                let retryable = matches!(
+                    e.kind(),
+                    ErrorKind::InvalidSignature | ErrorKind::InvalidAlgorithm
+                );
+                last = Some(e);
+                if !retryable {
+                    break;
+                }
+            }
+        }
+    }
+
+    use jsonwebtoken::errors::ErrorKind;
+    let (reason, err) = match last.as_ref().map(jsonwebtoken::errors::Error::kind) {
+        Some(ErrorKind::ExpiredSignature) => ("jwt_expired", ProxyError::JwtExpired),
+        Some(ErrorKind::ImmatureSignature) => ("jwt_not_yet_valid", ProxyError::JwtInvalid),
+        Some(ErrorKind::InvalidAudience) => ("jwt_audience_mismatch", ProxyError::JwtInvalid),
+        Some(ErrorKind::InvalidIssuer) => ("jwt_issuer_mismatch", ProxyError::JwtInvalid),
+        Some(ErrorKind::MissingRequiredClaim(_)) => ("jwt_missing_claim", ProxyError::JwtInvalid),
+        Some(ErrorKind::InvalidSignature) => ("jwt_bad_signature", ProxyError::JwtInvalid),
+        _ => ("jwt_invalid", ProxyError::JwtInvalid),
+    };
+    Err((reason, err))
+}
+
+/// Which provider requirement a verified token failed. The two map to
+/// different [`ProxyError`]s: a missing scope is curable by requesting
+/// a broader grant (so the `/mcp` surface may challenge for it), a
+/// `bound_claims` mismatch is an operator policy denial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimsRejection {
+    Scope,
+    BoundClaim,
+}
+
+/// Map a claims-rejection class onto its deny-reason string and
+/// caller-visible error. Split out of `authenticate_jwt` so the single
+/// construction site of [`ProxyError::JwtInsufficientScope`] — the
+/// error that carries the `/mcp` `insufficient_scope` challenge — is
+/// unit-testable (audit finding on #859).
+fn claims_rejection_error(
+    rejection: ClaimsRejection,
+    prov: &OidcProvider,
+) -> (&'static str, ProxyError) {
+    match rejection {
+        ClaimsRejection::Scope => (
+            "jwt_scope_missing",
+            ProxyError::JwtInsufficientScope {
+                required_scopes: prov.required_scopes.clone(),
+            },
+        ),
+        ClaimsRejection::BoundClaim => ("jwt_bound_claim_mismatch", ProxyError::JwtClaimsRejected),
+    }
+}
+
+/// Enforce the provider's `required_scopes` and `bound_claims`. Returns
+/// the rejection class of the first unmet requirement.
+fn check_provider_claims(
+    claims: &serde_json::Value,
+    prov: &OidcProvider,
+) -> Result<(), ClaimsRejection> {
+    if !prov.required_scopes.is_empty() {
+        let scopes = token_scopes(claims);
+        if !prov
+            .required_scopes
+            .iter()
+            .all(|req| scopes.iter().any(|s| s == req))
+        {
+            return Err(ClaimsRejection::Scope);
+        }
+    }
+    if let Some(bound) = &prov.bound_claims {
+        for (path, expect) in bound {
+            let matched = nested_claim(claims, path)
+                .is_some_and(|actual| bound_claim_matches(actual, expect));
+            if !matched {
+                return Err(ClaimsRejection::BoundClaim);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The token's granted scopes: a `scope` claim as the OAuth
+/// space-delimited string, or as an array of strings.
+fn token_scopes(claims: &serde_json::Value) -> Vec<String> {
+    match claims.get("scope") {
+        Some(serde_json::Value::String(s)) => s.split_whitespace().map(str::to_string).collect(),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Resolve a claim by path, dots traversing nested objects
+/// (`realm_access.roles`).
+fn nested_claim<'a>(claims: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut cur = claims;
+    for seg in path.split('.') {
+        cur = cur.get(seg)?;
+    }
+    Some(cur)
+}
+
+/// A bound-claim requirement holds when the claim equals — or, for array
+/// claims, contains — one of the expected values. Non-string claim shapes
+/// never match (deny by default).
+fn bound_claim_matches(actual: &serde_json::Value, expect: &BoundClaimExpect) -> bool {
+    match actual {
+        serde_json::Value::String(s) => expect.accepted().any(|e| e == s),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .any(|s| expect.accepted().any(|e| e == s)),
+        _ => false,
+    }
+}
+
+/// Decoding keys to try: an exact `kid` match when the token names one,
+/// otherwise every signature-use key in the set — an identity provider
+/// mid-rotation may publish two keys, and some omit `kid` entirely.
+///
+/// The fall-through list is not capped: a key the set publishes but we
+/// refuse to try is a token this gateway rejects for no reason the
+/// operator can see.
+///
+/// Being uncapped is a decision, not an oversight (user ruling,
+/// 2026-09-22), and the cost was measured before it was taken.
+/// [`JWKS_MAX_BYTES`] bounds how large the set may be, NOT what one
+/// request spends walking it, and the conversion is steep: 512 KB holds
+/// ~3100 P-384 JWKs, and verifying against all of them is ~640 ms of
+/// synchronous work on the worker thread serving the request (~3100
+/// P-256: 215 ms; ~1400 RSA-2048: 28 ms). Whether the walk happens at
+/// all is the caller's choice — a token carrying a `kid` takes the
+/// single-key path above. What the walk COSTS is not: it is bounded by
+/// what the configured `jwks_uri` publishes, and a set of that size is
+/// a misconfigured or hostile endpoint rather than a real IdP, which
+/// publishes one to three keys. That exposure is accepted; do not
+/// reintroduce a cap without reopening the decision.
+fn candidate_keys(jwks: &JwkSet, kid: Option<&str>, alg: Algorithm) -> Vec<DecodingKey> {
+    match kid {
+        Some(kid) => jwks
+            .find(kid)
+            .filter(|jwk| usable_for_verification(jwk, alg))
+            .and_then(|jwk| DecodingKey::from_jwk(jwk).ok())
+            .into_iter()
+            .collect(),
+        // Deliberately unbounded — see the accepted-exposure paragraph
+        // above before adding a `.take()` here.
+        None => jwks
+            .keys
+            .iter()
+            .filter(|jwk| usable_for_verification(jwk, alg))
+            .filter_map(|jwk| DecodingKey::from_jwk(jwk).ok())
+            .collect(),
+    }
+}
+
+/// True when a JWK may verify a signature at `alg`: not an
+/// encryption-only key (RFC 7517 §4.2 `use`), and — when the key names
+/// an algorithm — that algorithm (RFC 7517 §4.4 `alg`). Applied on both
+/// the `kid`-matched and the fall-through paths so a `use:enc` or
+/// wrong-`alg` key is never tried, even when its `kid` is named.
+fn usable_for_verification(jwk: &jsonwebtoken::jwk::Jwk, alg: Algorithm) -> bool {
+    let use_ok = jwk
+        .common
+        .public_key_use
+        .as_ref()
+        .is_none_or(|u| matches!(u, jsonwebtoken::jwk::PublicKeyUse::Signature));
+    // `KeyAlgorithm` (JWK `alg`) and `Algorithm` (token `alg`) are
+    // distinct enums with no cross-conversion; their variant names are
+    // identical (RS256 … EdDSA), so compare the Debug spellings.
+    let alg_ok = jwk
+        .common
+        .key_algorithm
+        .is_none_or(|k| format!("{k:?}") == format!("{alg:?}"));
+    use_ok && alg_ok
+}
+
+// ── JWKS fetch + cache ───────────────────────────────────────────────
+
+#[derive(Default)]
+struct JwksEntry {
+    /// The last successfully fetched key set and when it landed.
+    jwks: Option<(Arc<JwkSet>, Instant)>,
+    /// Completion of the last fetch, success or failure — the rate-limit clock.
+    last_attempt: Option<Instant>,
+    fetch_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// One issuer's resolved discovery result plus its rate-limit clock.
+#[derive(Default)]
+struct DiscoveryEntry {
+    /// The resolved `jwks_uri` and when discovery last succeeded.
+    resolved: Option<(String, Instant)>,
+    /// Completion of the last discovery attempt, success or failure.
+    last_attempt: Option<Instant>,
+    fetch_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// Read a poisoned-lock-tolerant guard. A panic while some other request
+/// held the lock only ever happened during a map op (never across an
+/// await), so the map is structurally intact; recovering the inner value
+/// keeps JWT auth alive instead of poisoning it process-wide.
+fn read_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn write_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Process-global JWKS cache keyed by URL. Guards are held only for map
+/// lookups/inserts, never across an await. Each entry's async lock lets
+/// concurrent misses share the completed fetch, across serving runtimes.
+fn jwks_cache() -> &'static RwLock<HashMap<String, JwksEntry>> {
+    static CACHE: OnceLock<RwLock<HashMap<String, JwksEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Discovery results keyed by issuer.
+fn discovery_cache() -> &'static RwLock<HashMap<String, DiscoveryEntry>> {
+    static CACHE: OnceLock<RwLock<HashMap<String, DiscoveryEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Shared HTTP client for JWKS / discovery fetches. Redirects are
+/// disabled — a key endpoint never legitimately redirects, and following
+/// one would fetch trust material from wherever it points.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        sibyl_gateway_hub::client_builder()
+            .timeout(JWKS_FETCH_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// The JWKS URL for a provider: its configured `jwks_uri`, or the
+/// `jwks_uri` advertised by the issuer's OIDC discovery document.
+///
+/// Discovery is cached (TTL) and rate-limited on failure the same way
+/// the JWKS fetch is, so an issuer whose discovery document is down does
+/// not get re-probed once per request. The advertised `jwks_uri` is
+/// verified against the issuer (OIDC Discovery 1.0 §4.3) and constrained
+/// to the issuer's own origin, so a compromised or misconfigured
+/// discovery document cannot relocate trust material into our network.
+async fn resolve_jwks_url(prov: &OidcProvider) -> Result<String, String> {
+    if let Some(u) = &prov.jwks_uri {
+        if url_has_credentials(u) {
+            return Err("jwks_uri must not embed credentials".to_string());
+        }
+        return Ok(u.clone());
+    }
+    // A JWKS-mode provider always carries an issuer — the row validator
+    // rejects one that does not — and discovery is derived entirely from
+    // it, so there is nothing to resolve without one.
+    let Some(issuer) = prov.issuer.as_deref() else {
+        return Err(
+            "a provider with no jwks_uri must declare an issuer to discover from".to_string(),
+        );
+    };
+    {
+        let map = read_recover(discovery_cache());
+        if let Some((url, at)) = map.get(issuer).and_then(|e| e.resolved.as_ref()) {
+            if at.elapsed() < JWKS_TTL {
+                return Ok(url.clone());
+            }
+        }
+    }
+    let fetch_lock = write_recover(discovery_cache())
+        .entry(issuer.to_string())
+        .or_default()
+        .fetch_lock
+        .clone();
+    let _fetch = match fetch_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            if let Some((url, _)) = read_recover(discovery_cache())
+                .get(issuer)
+                .and_then(|e| e.resolved.as_ref())
+            {
+                return Ok(url.clone());
+            }
+            fetch_lock.lock().await
+        }
+    };
+    let now = Instant::now();
+    let (stale, attempted_recently) = {
+        let map = read_recover(discovery_cache());
+        match map.get(issuer) {
+            Some(entry) => {
+                if let Some((url, at)) = &entry.resolved {
+                    if now.duration_since(*at) < JWKS_TTL {
+                        return Ok(url.clone());
+                    }
+                }
+                (
+                    entry.resolved.as_ref().map(|(u, _)| u.clone()),
+                    entry
+                        .last_attempt
+                        .is_some_and(|at| now.duration_since(at) < JWKS_REFRESH_MIN_INTERVAL),
+                )
+            }
+            None => (None, false),
+        }
+    };
+    if attempted_recently {
+        // Suppressed by the refresh interval: serve the stale resolution
+        // rather than probe a down issuer once per request.
+        return stale
+            .ok_or_else(|| "OIDC discovery suppressed by the refresh interval".to_string());
+    }
+
+    let discovery_url = format!(
+        "{}/.well-known/openid-configuration",
+        issuer.trim_end_matches('/')
+    );
+    let result = fetch_json(&discovery_url).await;
+    // Only completed attempts consume the interval. Cancellation drops the
+    // fetch lock so a waiting request can take over instead of failing cold.
+    write_recover(discovery_cache())
+        .entry(issuer.to_string())
+        .or_default()
+        .last_attempt = Some(Instant::now());
+    match result {
+        Ok(doc) => {
+            // §4.3: the document must claim the issuer we asked about.
+            if doc.get("issuer").and_then(|v| v.as_str()) != Some(issuer) {
+                return Err(
+                    "discovery document issuer does not match the configured issuer".to_string(),
+                );
+            }
+            let jwks_uri = doc
+                .get("jwks_uri")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "discovery document carries no jwks_uri".to_string())?
+                .to_string();
+            // The advertised endpoint decides where trust material comes
+            // from, so it must stay on the issuer's own origin — otherwise
+            // the discovery document is an open redirect into our network.
+            if !same_origin(issuer, &jwks_uri) {
+                return Err("discovery jwks_uri is not on the issuer's origin".to_string());
+            }
+            if url_has_credentials(&jwks_uri) {
+                return Err("discovery jwks_uri must not embed credentials".to_string());
+            }
+            write_recover(discovery_cache())
+                .entry(issuer.to_string())
+                .or_default()
+                .resolved = Some((jwks_uri.clone(), Instant::now()));
+            Ok(jwks_uri)
+        }
+        Err(e) => {
+            // Serve the stale resolution rather than failing auth outright.
+            if let Some(url) = stale {
+                tracing::warn!(
+                    target: "sibyl-gateway::auth",
+                    issuer = %clip(issuer),
+                    error = %e,
+                    "OIDC discovery re-fetch failed; keeping the previously resolved JWKS URL",
+                );
+                return Ok(url);
+            }
+            Err(format!("OIDC discovery failed: {e}"))
+        }
+    }
+}
+
+/// True when a URL embeds credentials that must never sit in a public
+/// JWKS endpoint: userinfo (`user:pass@host`) or a credential query
+/// parameter. A defense-in-depth mirror of the control plane's ingestion
+/// check, for file-mode and discovery-returned URLs.
+fn url_has_credentials(url: &str) -> bool {
+    match reqwest::Url::parse(url) {
+        Ok(u) => {
+            if !u.username().is_empty() || u.password().is_some() {
+                return true;
+            }
+            u.query_pairs().any(|(k, _)| {
+                matches!(
+                    k.to_ascii_lowercase().as_str(),
+                    "access_token" | "token" | "client_secret" | "password" | "api_key" | "apikey"
+                )
+            })
+        }
+        // Unparseable here is caught elsewhere (fetch fails); treat as
+        // credential-free so this check doesn't double-report.
+        Err(_) => false,
+    }
+}
+
+/// True when `candidate` shares scheme + host + port with `base`.
+fn same_origin(base: &str, candidate: &str) -> bool {
+    match (reqwest::Url::parse(base), reqwest::Url::parse(candidate)) {
+        (Ok(b), Ok(c)) => {
+            b.scheme() == c.scheme()
+                && b.host_str() == c.host_str()
+                && b.port_or_known_default() == c.port_or_known_default()
+        }
+        _ => false,
+    }
+}
+
+/// The cached key set for `url`, fetching when absent or past
+/// [`JWKS_TTL`]. A fetch attempted within [`JWKS_REFRESH_MIN_INTERVAL`]
+/// suppresses another one: one inbound JWT must never become one
+/// outbound JWKS fetch, or a slow/down endpoint turns every request into
+/// a [`JWKS_FETCH_TIMEOUT`] wait and floods the identity provider. A
+/// failed re-fetch keeps serving the stale set; with nothing cached the
+/// error propagates and the request fails closed as retryable.
+async fn get_jwks(url: &str) -> Result<Arc<JwkSet>, String> {
+    {
+        let map = read_recover(jwks_cache());
+        if let Some((jwks, at)) = map.get(url).and_then(|e| e.jwks.as_ref()) {
+            if at.elapsed() < JWKS_TTL {
+                return Ok(jwks.clone());
+            }
+        }
+    }
+    refresh_jwks(url, false).await
+}
+
+/// One fetch for an unknown `kid`, suppressed inside
+/// [`JWKS_REFRESH_MIN_INTERVAL`] of the previous attempt.
+async fn refresh_jwks_rate_limited(url: &str) -> Option<Arc<JwkSet>> {
+    refresh_jwks(url, true).await.ok()
+}
+
+async fn refresh_jwks(url: &str, unknown_kid: bool) -> Result<Arc<JwkSet>, String> {
+    let fetch_lock = write_recover(jwks_cache())
+        .entry(url.to_string())
+        .or_default()
+        .fetch_lock
+        .clone();
+    let _fetch = match fetch_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            if !unknown_kid {
+                if let Some((stale, _)) = read_recover(jwks_cache())
+                    .get(url)
+                    .and_then(|e| e.jwks.as_ref())
+                {
+                    return Ok(stale.clone());
+                }
+            }
+            fetch_lock.lock().await
+        }
+    };
+    {
+        let map = read_recover(jwks_cache());
+        if let Some(entry) = map.get(url) {
+            if !unknown_kid {
+                if let Some((jwks, at)) = &entry.jwks {
+                    if at.elapsed() < JWKS_TTL {
+                        return Ok(jwks.clone());
+                    }
+                }
+            }
+            if entry
+                .last_attempt
+                .is_some_and(|at| at.elapsed() < JWKS_REFRESH_MIN_INTERVAL)
+            {
+                return entry
+                    .jwks
+                    .as_ref()
+                    .map(|(j, _)| j.clone())
+                    .ok_or_else(|| "JWKS fetch suppressed by the refresh interval".to_string());
+            }
+        }
+    }
+    let result = fetch_json(url).await.and_then(|v| {
+        serde_json::from_value::<JwkSet>(v).map_err(|e| format!("not a JWKS document: {e}"))
+    });
+    // The lock covers in-flight requests; the interval covers completed
+    // attempts, including failures slower than the interval itself.
+    write_recover(jwks_cache())
+        .entry(url.to_string())
+        .or_default()
+        .last_attempt = Some(Instant::now());
+    match result {
+        Ok(set) => {
+            let arc = Arc::new(set);
+            write_recover(jwks_cache())
+                .entry(url.to_string())
+                .or_default()
+                .jwks = Some((arc.clone(), Instant::now()));
+            Ok(arc)
+        }
+        Err(e) => {
+            if let Some(entry) = read_recover(jwks_cache()).get(url) {
+                if let Some((stale, _)) = &entry.jwks {
+                    tracing::warn!(
+                        target: "sibyl-gateway::auth",
+                        error = %e,
+                        "JWKS re-fetch failed; keeping the previously fetched key set",
+                    );
+                    return Ok(stale.clone());
+                }
+            }
+            Err(e)
+        }
+    }
+}
+
+async fn fetch_json(url: &str) -> Result<serde_json::Value, String> {
+    let mut resp = http_client()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("endpoint returned status {}", resp.status()));
+    }
+    // Reject on the advertised length when present, then enforce the cap
+    // while streaming — `bytes()` would buffer the whole body first, so a
+    // hostile endpoint could OOM a small pod before any size check.
+    if resp
+        .content_length()
+        .is_some_and(|n| n > JWKS_MAX_BYTES as u64)
+    {
+        return Err(format!("response exceeds {JWKS_MAX_BYTES} bytes"));
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("reading response failed: {e}"))?
+    {
+        if buf.len() + chunk.len() > JWKS_MAX_BYTES {
+            return Err(format!("response exceeds {JWKS_MAX_BYTES} bytes"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&buf).map_err(|e| format!("response is not JSON: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use sibyl_gateway_core::resource::ResourceEntry;
+
+    struct FetchServer {
+        url: String,
+        hold: Arc<std::sync::atomic::AtomicBool>,
+        fail: Arc<std::sync::atomic::AtomicBool>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for FetchServer {
+        fn drop(&mut self) {
+            self.release.notify_waiters();
+            self.task.abort();
+        }
+    }
+
+    async fn fetch_server(discovery: bool) -> FetchServer {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let hold = Arc::new(AtomicBool::new(false));
+        let fail = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let handler = {
+            let (hold, fail, calls, entered, release) = (
+                hold.clone(),
+                fail.clone(),
+                calls.clone(),
+                entered.clone(),
+                release.clone(),
+            );
+            let body = if discovery {
+                serde_json::json!({"issuer": url, "jwks_uri": format!("{url}/jwks")}).to_string()
+            } else {
+                TEST_JWKS.to_string()
+            };
+            move || {
+                let (hold, fail, calls, entered, release, body) = (
+                    hold.clone(),
+                    fail.clone(),
+                    calls.clone(),
+                    entered.clone(),
+                    release.clone(),
+                    body.clone(),
+                );
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    if hold.load(Ordering::SeqCst) {
+                        let released = release.notified();
+                        tokio::pin!(released);
+                        released.as_mut().enable();
+                        entered.notify_one();
+                        released.await;
+                    }
+                    let status = if fail.load(Ordering::SeqCst) {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        axum::http::StatusCode::OK
+                    };
+                    (status, body)
+                }
+            }
+        };
+        let router = axum::Router::new().fallback(handler);
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        FetchServer {
+            url,
+            hold,
+            fail,
+            calls,
+            entered,
+            release,
+            task,
+        }
+    }
+
+    async fn cached_fetch(url: &str, discovery: bool) -> Result<(), String> {
+        if discovery {
+            let mut provider = base_provider();
+            provider.issuer = Some(url.to_string());
+            resolve_jwks_url(&provider).await.map(|_| ())
+        } else {
+            get_jwks(url).await.map(|_| ())
+        }
+    }
+
+    async fn assert_cancelled_fetch_can_retry(discovery: bool) {
+        use std::sync::atomic::Ordering;
+        let server = fetch_server(discovery).await;
+        server.hold.store(true, Ordering::SeqCst);
+        let url = server.url.clone();
+        let first = tokio::spawn(async move { cached_fetch(&url, discovery).await });
+        server.entered.notified().await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        server.hold.store(false, Ordering::SeqCst);
+        server.release.notify_waiters();
+        assert_eq!(cached_fetch(&server.url, discovery).await, Ok(()));
+        assert_eq!(server.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn cancelled_jwks_fetch_can_retry() {
+        assert_cancelled_fetch_can_retry(false).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_discovery_fetch_can_retry() {
+        assert_cancelled_fetch_can_retry(true).await;
+    }
+
+    #[tokio::test]
+    async fn expired_trust_material_stays_available_during_refresh_and_outage() {
+        use std::sync::atomic::Ordering;
+        for discovery in [false, true] {
+            let server = fetch_server(discovery).await;
+            assert_eq!(cached_fetch(&server.url, discovery).await, Ok(()));
+            let past = Instant::now() - JWKS_TTL - Duration::from_secs(1);
+            if discovery {
+                let mut cache = write_recover(discovery_cache());
+                let entry = cache.get_mut(&server.url).unwrap();
+                entry.resolved.as_mut().unwrap().1 = past;
+                entry.last_attempt = Some(past);
+            } else {
+                let mut cache = write_recover(jwks_cache());
+                let entry = cache.get_mut(&server.url).unwrap();
+                entry.jwks.as_mut().unwrap().1 = past;
+                entry.last_attempt = Some(past);
+            }
+            server.hold.store(true, Ordering::SeqCst);
+            server.fail.store(true, Ordering::SeqCst);
+            let url = server.url.clone();
+            let refresh = tokio::spawn(async move { cached_fetch(&url, discovery).await });
+            server.entered.notified().await;
+            // A known key / discovery URL must not wait behind an outage.
+            assert_eq!(
+                tokio::time::timeout(
+                    Duration::from_millis(100),
+                    cached_fetch(&server.url, discovery)
+                )
+                .await
+                .unwrap(),
+                Ok(())
+            );
+            server.release.notify_waiters();
+            assert_eq!(refresh.await.unwrap(), Ok(()));
+            assert_eq!(cached_fetch(&server.url, discovery).await, Ok(()));
+            assert_eq!(server.calls.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    /// Test-only RSA keypair. The private PEM signs fixture tokens; the
+    /// JWK below is its public half (kid `test-kid-1`).
+    const TEST_RSA_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDfARbZauGK4bRk
+UL0gWcsvGyFBMVW6eeNcAy7U0APH92H5DSImyf1WhnvfDareRkXFBhiHy6Bj0wfz
+7yE7kgPNhXB0l4r8mFd3biTklxt5fDKqvJZd473fFOkiM//DjB62lodXfDLwhr0o
+zQi0xCnPzMyzQx9EVR1v1JwW/9lS4QaEgiVGDES9mh0kfnszw7sH5IFwKz2BgtHS
+gHJ+Wykr7hB7DY103OxE69BXKA2bJ+k/0ai8dQiSzgfIEkailvy/2wZoOfVbEfWp
+wXPuP+ipqn/9c9mbbjMRtUHOjgBQvqiwjix21nh8ZoeCA8z/YuvdgXXTJgoG0h+I
+WLyQXSOxAgMBAAECggEABPxNak3uk0Ae3Cab8ScLblcBGX0vXqG5TgYk3A13JYIn
+1r1kQpFoewXlq2PEVVTP3CrvOHX6dNDeetB2oed5SJ/PlvkJBUL9+EW7ncACarxh
+QO+XaFZI7pL/7/ZRT6oIc7+OG2FuSByoX6BPLgS8BJEeZcbojOAJmPBGub2S5RHn
+x/g/a58W+AmudYZY+aqVg84SBu8FQF7J3ygvT2we6k0xu7nPp23lpF9zQdLcDRlM
+d1Dqu3JyQApKO4xtfcQFGbJzq6fIyaFX08mkQeewkek3XXf2JUmcnfCx37gOv8hy
+7k8nPT1vzzFIVJFx/f+W91KmixmrNU7mlvpuHRBlKwKBgQD+vtCwzkU6wvXr6OaL
+R3iT+QSt49aMHIi6u0SSDJnjVoQDVXivyybVRRCwYWXzng5ajt1fs9dsW2ELxco3
+mCrf5ayrsUhjytSEvCXXfpomA75518s+r3Nlu7qccHTvlRxLzLk1rQ9UilEYVT3s
+DF4xbu/91rJ9gNWiocv4xGa3PwKBgQDgGkEvTMsoiJQW0Drs+rohBThw24Bt0wvP
+wSwgz71PxwJvEIT8qeCJDBINiXeTDPe8pxpO+As+iaBdJ5YQ7ctyuGvLA6892zto
+/AcszvCL8R6sxcPt9ak4/GhY0weKT4DsjjPNOPWFY9ebZ/xD/6R9lb6Ksi+G/pXM
+CusKpfzZDwKBgAw8hjG39sNX0hA+47QU/sm80Gi55Phd9oNhs22AhXPSGA1A8ccf
+7wGXi7GtPARztyTKb//E17gwu3yhR5FcEdMnaR/mKCADAipOD1NGlYj17RRVNUIR
+k21zkwcor7VCaFWLw+m8IlxhOHv+vDa2cV/WgFilE3XL1nc1ZmLQrE5pAoGAIig+
+STxWNs5ia/u/D4HDvuaxzJnYQGULhtX1qOag/zjhCRamfnBSFfFuCvwp6pLua6W4
+n9K0vAp0E97Fw7zK5qhvXZkpK69vpbfMTCsahOnyd/kIvQtViKcILIm1u4IUr3mZ
+Ma191p/6K+i0jZS4eJ/LVA6GqffB00DSxGO6X0cCgYAA+KRVMdHHBiuL3XO0srlR
+0lY0cuVX8TTsJf1AkLH8rutn3Xa7maLVOrNoUnhE6j5UmzojlzMGUTmi1sryMipU
+MFt+Fn9pwKAtrgAFlmGhAsOBmC4fnn0jNN4aV6B5gSbQFLSGXmF3qCJHTLT2gPR3
+jyxumGxNpoIV8LlzsMsaWQ==
+-----END PRIVATE KEY-----";
+
+    const TEST_JWKS: &str = r#"{"keys":[{"kty":"RSA","kid":"test-kid-1","use":"sig","alg":"RS256","n":"3wEW2WrhiuG0ZFC9IFnLLxshQTFVunnjXAMu1NADx_dh-Q0iJsn9VoZ73w2q3kZFxQYYh8ugY9MH8-8hO5IDzYVwdJeK_JhXd24k5JcbeXwyqryWXeO93xTpIjP_w4wetpaHV3wy8Ia9KM0ItMQpz8zMs0MfRFUdb9ScFv_ZUuEGhIIlRgxEvZodJH57M8O7B-SBcCs9gYLR0oByflspK-4Qew2NdNzsROvQVygNmyfpP9GovHUIks4HyBJGopb8v9sGaDn1WxH1qcFz7j_oqap__XPZm24zEbVBzo4AUL6osI4sdtZ4fGaHggPM_2Lr3YF10yYKBtIfiFi8kF0jsQ","e":"AQAB"}]}"#;
+
+    /// The public modulus of an unrelated RSA keypair whose private half
+    /// exists nowhere: a well-formed JWK that parses into a decoding key
+    /// and verifies nothing.
+    const DECOY_RSA_MODULUS: &str = "tWzP0LvGGpXqYBIOiKvcxbJOC25xFDGSCaPBpNr3SDhkDSZKcnb7nQ2bBq9UEHbj9Yycu--k1h6gFPi6XLGmOxW267ceBUg-v496erzx2m__rmIowT7d_jvp2LSPdYERwPxqsjKmTYVQzZq9ewDsajeRPJ1XSvU8fKD69Aj51LngffuCgcMWgumLAWRswLduhDBcHCBU-Xz5hEPmFOzz1gMWC8rZgLcv8UjYJDkg4elI8IpSxsPSzBSJb8LpE20s3Oi1h8zGwlzAha04MNZVF-RCgq1tQtmZFXL929G2gFVCciFHesjUV7gCtmE4HbPHXs9ui38_XOi_hCqq2_2rhw";
+
+    fn test_provider(json: &str) -> OidcProvider {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn base_provider() -> OidcProvider {
+        test_provider(
+            r#"{
+              "name": "test-idp",
+              "issuer": "https://idp.test/realms/agents",
+              "audiences": ["sibyl-gateway"]
+            }"#,
+        )
+    }
+
+    fn encoding_key() -> EncodingKey {
+        EncodingKey::from_rsa_pem(TEST_RSA_PEM.as_bytes()).unwrap()
+    }
+
+    fn decoding_keys() -> Vec<DecodingKey> {
+        let jwks: JwkSet = serde_json::from_str(TEST_JWKS).unwrap();
+        candidate_keys(&jwks, Some("test-kid-1"), Algorithm::RS256)
+    }
+
+    fn sign(claims: &serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("test-kid-1".to_string());
+        encode(&header, claims, &encoding_key()).unwrap()
+    }
+
+    fn future() -> i64 {
+        chrono::Utc::now().timestamp() + 3600
+    }
+
+    fn valid_claims() -> serde_json::Value {
+        serde_json::json!({
+            "iss": "https://idp.test/realms/agents",
+            "aud": "sibyl-gateway",
+            "sub": "agent-1",
+            "exp": future(),
+        })
+    }
+
+    #[test]
+    fn looks_like_jwt_accepts_real_tokens_only() {
+        assert!(looks_like_jwt(&sign(&valid_claims())));
+        // Generated gateway keys.
+        assert!(!looks_like_jwt("sk-3f5a1b2c"));
+        // Custom-imported keys that merely contain dots: segments do not
+        // decode to a JOSE header.
+        assert!(!looks_like_jwt("a.b.c"));
+        assert!(!looks_like_jwt("my.custom.key"));
+        // Wrong segment counts.
+        assert!(!looks_like_jwt("a.b"));
+        assert!(!looks_like_jwt("a.b.c.d"));
+        assert!(!looks_like_jwt(""));
+        // A base64url JSON first segment without `alg` is not a JWT.
+        let not_jose = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"a\":1}");
+        assert!(!looks_like_jwt(&format!("{not_jose}.x.y")));
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_token() {
+        let claims = validate_with_keys(
+            &sign(&valid_claims()),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap();
+        assert_eq!(claims["sub"], "agent-1");
+    }
+
+    #[test]
+    fn validate_rejects_expired_token_as_jwt_expired() {
+        let mut c = valid_claims();
+        c["exp"] = serde_json::json!(chrono::Utc::now().timestamp() - 3600);
+        let (reason, err) = validate_with_keys(
+            &sign(&c),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_expired");
+        assert!(matches!(err, ProxyError::JwtExpired));
+    }
+
+    #[test]
+    fn validate_requires_exp() {
+        let mut c = valid_claims();
+        c.as_object_mut().unwrap().remove("exp");
+        let (reason, _) = validate_with_keys(
+            &sign(&c),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_missing_claim");
+    }
+
+    #[test]
+    fn validate_requires_audience_presence_and_match() {
+        let mut missing = valid_claims();
+        missing.as_object_mut().unwrap().remove("aud");
+        let (reason, _) = validate_with_keys(
+            &sign(&missing),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_missing_claim");
+
+        let mut wrong = valid_claims();
+        wrong["aud"] = serde_json::json!("someone-else");
+        let (reason, _) = validate_with_keys(
+            &sign(&wrong),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_audience_mismatch");
+
+        // Array audiences match when any element is accepted.
+        let mut array = valid_claims();
+        array["aud"] = serde_json::json!(["other", "sibyl-gateway"]);
+        assert!(validate_with_keys(
+            &sign(&array),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_wrong_issuer() {
+        let mut c = valid_claims();
+        c["iss"] = serde_json::json!("https://evil.test");
+        let (reason, _) = validate_with_keys(
+            &sign(&c),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_issuer_mismatch");
+    }
+
+    #[test]
+    fn validate_rejects_future_nbf_and_accepts_past_nbf() {
+        let mut c = valid_claims();
+        c["nbf"] = serde_json::json!(future());
+        let (reason, _) = validate_with_keys(
+            &sign(&c),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_not_yet_valid");
+
+        let mut ok = valid_claims();
+        ok["nbf"] = serde_json::json!(chrono::Utc::now().timestamp() - 60);
+        assert!(validate_with_keys(
+            &sign(&ok),
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_tampered_signature() {
+        let token = sign(&valid_claims());
+        let mut parts: Vec<String> = token.split('.').map(str::to_string).collect();
+        // Re-encode the payload with a widened scope; the signature no
+        // longer covers it.
+        let mut payload = valid_claims();
+        payload["sub"] = serde_json::json!("agent-admin");
+        parts[1] = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).unwrap());
+        let tampered = parts.join(".");
+        let (reason, _) = validate_with_keys(
+            &tampered,
+            Algorithm::RS256,
+            &base_provider(),
+            &decoding_keys(),
+        )
+        .unwrap_err();
+        assert_eq!(reason, "jwt_bad_signature");
+    }
+
+    #[test]
+    fn leeway_tolerates_recent_expiry() {
+        let mut prov = base_provider();
+        prov.leeway_secs = 120;
+        let mut c = valid_claims();
+        c["exp"] = serde_json::json!(chrono::Utc::now().timestamp() - 30);
+        assert!(validate_with_keys(&sign(&c), Algorithm::RS256, &prov, &decoding_keys()).is_ok());
+    }
+
+    #[test]
+    fn claims_rejection_error_maps_scope_to_insufficient_scope_with_provider_scopes() {
+        let prov = test_provider(
+            r#"{
+              "name": "test-idp",
+              "issuer": "https://idp.test/realms/agents",
+              "audiences": ["sibyl-gateway"],
+              "required_scopes": ["ai.access", "mcp:tools"]
+            }"#,
+        );
+
+        let (reason, err) = claims_rejection_error(ClaimsRejection::Scope, &prov);
+        assert_eq!(reason, "jwt_scope_missing");
+        match err {
+            ProxyError::JwtInsufficientScope { required_scopes } => {
+                assert_eq!(
+                    required_scopes,
+                    vec!["ai.access".to_string(), "mcp:tools".to_string()],
+                    "the challenge must name the provider's required scopes",
+                );
+            }
+            other => panic!("scope failure must map to JwtInsufficientScope, got {other:?}"),
+        }
+
+        // A bound-claims policy denial keeps the challenge-less variant.
+        let (reason, err) = claims_rejection_error(ClaimsRejection::BoundClaim, &prov);
+        assert_eq!(reason, "jwt_bound_claim_mismatch");
+        assert!(matches!(err, ProxyError::JwtClaimsRejected));
+    }
+
+    #[test]
+    fn scope_and_bound_claim_checks() {
+        let prov = test_provider(
+            r#"{
+              "name": "test-idp",
+              "issuer": "https://idp.test/realms/agents",
+              "audiences": ["sibyl-gateway"],
+              "required_scopes": ["ai.access"],
+              "bound_claims": {
+                "department": "ai-lab",
+                "realm_access.roles": ["agent", "batch"]
+              }
+            }"#,
+        );
+
+        let mut good = valid_claims();
+        good["scope"] = serde_json::json!("openid ai.access");
+        good["department"] = serde_json::json!("ai-lab");
+        good["realm_access"] = serde_json::json!({"roles": ["other", "agent"]});
+        assert!(check_provider_claims(&good, &prov).is_ok());
+
+        // Scope may also arrive as an array.
+        let mut array_scope = good.clone();
+        array_scope["scope"] = serde_json::json!(["ai.access"]);
+        assert!(check_provider_claims(&array_scope, &prov).is_ok());
+
+        let mut no_scope = good.clone();
+        no_scope["scope"] = serde_json::json!("openid");
+        assert_eq!(
+            check_provider_claims(&no_scope, &prov),
+            Err(ClaimsRejection::Scope)
+        );
+
+        let mut wrong_dept = good.clone();
+        wrong_dept["department"] = serde_json::json!("finance");
+        assert_eq!(
+            check_provider_claims(&wrong_dept, &prov),
+            Err(ClaimsRejection::BoundClaim)
+        );
+
+        // A missing bound claim denies — never a silent pass.
+        let mut missing = good.clone();
+        missing.as_object_mut().unwrap().remove("department");
+        assert_eq!(
+            check_provider_claims(&missing, &prov),
+            Err(ClaimsRejection::BoundClaim)
+        );
+
+        // Non-string claim shapes never match.
+        let mut numeric = good.clone();
+        numeric["department"] = serde_json::json!(7);
+        assert_eq!(
+            check_provider_claims(&numeric, &prov),
+            Err(ClaimsRejection::BoundClaim)
+        );
+    }
+
+    #[test]
+    fn candidate_keys_selects_by_kid_and_falls_back_to_all() {
+        let jwks: JwkSet = serde_json::from_str(TEST_JWKS).unwrap();
+        assert_eq!(
+            candidate_keys(&jwks, Some("test-kid-1"), Algorithm::RS256).len(),
+            1
+        );
+        assert!(candidate_keys(&jwks, Some("rotated-away"), Algorithm::RS256).is_empty());
+        // No kid on the token: every signature key is a candidate.
+        assert_eq!(candidate_keys(&jwks, None, Algorithm::RS256).len(), 1);
+        // The JWK declares alg RS256, so a token claiming a different alg
+        // finds no usable key (RFC 7517 §4.4).
+        assert!(candidate_keys(&jwks, Some("test-kid-1"), Algorithm::PS256).is_empty());
+        assert!(candidate_keys(&jwks, None, Algorithm::ES256).is_empty());
+    }
+
+    #[test]
+    fn provider_selection_is_unique_and_fails_closed_on_duplicate_issuer() {
+        let snapshot = GatewaySnapshot::new();
+        let mk = |id: &str, issuer: &str, enabled: bool| {
+            let mut p = base_provider();
+            p.issuer = Some(issuer.to_string());
+            p.enabled = enabled;
+            snapshot.oidc_providers.insert(ResourceEntry::new(id, p, 1));
+        };
+        mk("corp", "https://corp.test", true);
+        mk("partner", "https://partner.test", true);
+        mk("disabled", "https://off.test", false);
+        let matched = |iss: &str| match provider_for_issuer(&snapshot, iss) {
+            ProviderMatch::One(entry) => Some(entry.id.clone()),
+            _ => None,
+        };
+        assert_eq!(matched("https://corp.test").as_deref(), Some("corp"));
+        // A disabled provider is not selected even on an exact issuer match.
+        assert!(matched("https://off.test").is_none());
+        assert!(matched("https://unknown.test").is_none());
+        // Neither is "nobody claims it" — that answer has to stay
+        // distinguishable from ambiguity, or the issuer-less trial path
+        // would swallow a claimed issuer.
+        assert!(matches!(
+            provider_for_issuer(&snapshot, "https://unknown.test"),
+            ProviderMatch::None
+        ));
+
+        // Two ENABLED providers claiming one issuer -> fail closed, not a
+        // silent pick (their audience/scope policies differ) and not a
+        // fall-through to the issuer-less candidates either.
+        mk("corp-dup", "https://corp.test", true);
+        assert!(matches!(
+            provider_for_issuer(&snapshot, "https://corp.test"),
+            ProviderMatch::Ambiguous
+        ));
+    }
+
+    #[test]
+    fn key_selection_namespaces_by_provider_and_fails_closed_on_duplicate() {
+        let snapshot = GatewaySnapshot::new();
+        let index = crate::jwt_index::LiveJwtBindings::default();
+        let mk_key = |id: &str, subject: Option<&str>, provider: Option<&str>| {
+            let mut k: ApiKey =
+                serde_json::from_str(r#"{"key_hash":"h","allowed_models":["*"]}"#).unwrap();
+            k.jwt_subject = subject.map(str::to_string);
+            k.jwt_provider = provider.map(str::to_string);
+            // Distinct key_hash per row so the by-name index stays unique.
+            k.key_hash = format!("hash-{id}");
+            snapshot.apikeys.insert(ResourceEntry::new(id, k, 1));
+        };
+        mk_key("k-1", Some("agent-1"), Some("corp"));
+        mk_key("k-3", Some("agent-2"), Some("corp"));
+        mk_key("k-4", None, None);
+        // Same subject under a DIFFERENT provider resolves separately —
+        // the cross-provider impersonation guard (audit H1).
+        mk_key("k-5", Some("agent-1"), Some("partner"));
+        assert_eq!(
+            key_for_subject(&index, &snapshot, "corp", "agent-1")
+                .0
+                .unwrap()
+                .id,
+            "k-1"
+        );
+        assert_eq!(
+            key_for_subject(&index, &snapshot, "corp", "agent-2")
+                .0
+                .unwrap()
+                .id,
+            "k-3"
+        );
+        assert_eq!(
+            key_for_subject(&index, &snapshot, "partner", "agent-1")
+                .0
+                .unwrap()
+                .id,
+            "k-5"
+        );
+        // No provider match -> no key, even though the subject exists —
+        // and no ambiguity signal either.
+        assert!(matches!(
+            key_for_subject(&index, &snapshot, "unknown", "agent-1"),
+            (None, false)
+        ));
+        assert!(matches!(
+            key_for_subject(&index, &snapshot, "corp", "agent-9"),
+            (None, false)
+        ));
+
+        // A duplicate (provider, subject) pair -> fail closed, and the
+        // ambiguity is REPORTED so the auth path can reject instead of
+        // falling through to the claim mappings.
+        mk_key("k-1-dup", Some("agent-1"), Some("corp"));
+        assert!(matches!(
+            key_for_subject(&index, &snapshot, "corp", "agent-1"),
+            (None, true)
+        ));
+    }
+
+    #[test]
+    fn same_origin_matches_scheme_host_port() {
+        assert!(same_origin(
+            "https://sso.example.com/realms/x",
+            "https://sso.example.com/realms/x/certs"
+        ));
+        // default port equivalence
+        assert!(same_origin(
+            "https://sso.example.com",
+            "https://sso.example.com:443/certs"
+        ));
+        // different host / scheme / port all rejected
+        assert!(!same_origin(
+            "https://sso.example.com",
+            "https://evil.example.com/certs"
+        ));
+        assert!(!same_origin(
+            "https://sso.example.com",
+            "http://sso.example.com/certs"
+        ));
+        assert!(!same_origin(
+            "https://sso.example.com",
+            "https://sso.example.com:8443/certs"
+        ));
+    }
+
+    #[test]
+    fn oversized_token_is_not_a_jwt() {
+        let big = format!("{}.{}.{}", "a".repeat(MAX_JWT_BYTES), "b", "c");
+        assert!(big.len() > MAX_JWT_BYTES);
+        assert!(!looks_like_jwt(&big));
+    }
+
+    #[test]
+    fn nested_claim_traverses_dots() {
+        let v = serde_json::json!({"a": {"b": {"c": "x"}}, "flat": "y"});
+        assert_eq!(nested_claim(&v, "a.b.c").unwrap(), "x");
+        assert_eq!(nested_claim(&v, "flat").unwrap(), "y");
+        assert!(nested_claim(&v, "a.missing").is_none());
+    }
+
+    #[test]
+    fn unverified_issuer_reads_the_payload() {
+        assert_eq!(
+            unverified_issuer(&sign(&valid_claims())).as_deref(),
+            Some("https://idp.test/realms/agents")
+        );
+        assert!(unverified_issuer("sk-abc").is_none());
+    }
+
+    fn mapping(json: serde_json::Value) -> ClaimMapping {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn claim_match_ops_are_strictly_typed() {
+        let claims = serde_json::json!({
+            "department": "finance",
+            "groups": ["dev", "mcp-admin", 42],
+            "realm_access": {"roles": ["agent"]},
+            "count": 7,
+        });
+        let m = |claim: &str, op: &str, values: serde_json::Value| -> ClaimMatch {
+            serde_json::from_value(serde_json::json!({
+                "claim": claim, "op": op, "values": values
+            }))
+            .unwrap()
+        };
+
+        // exact: string equality against any accepted value.
+        assert!(claim_match_holds(
+            &claims,
+            &m("department", "exact", serde_json::json!(["hr", "finance"]))
+        ));
+        assert!(!claim_match_holds(
+            &claims,
+            &m("department", "exact", serde_json::json!(["hr"]))
+        ));
+        // exact never matches an array claim, even one containing the value.
+        assert!(!claim_match_holds(
+            &claims,
+            &m("groups", "exact", serde_json::json!(["mcp-admin"]))
+        ));
+
+        // contains: array membership; non-string items are ignored.
+        assert!(claim_match_holds(
+            &claims,
+            &m("groups", "contains", serde_json::json!(["mcp-admin"]))
+        ));
+        assert!(!claim_match_holds(
+            &claims,
+            &m("groups", "contains", serde_json::json!(["ops"]))
+        ));
+        // contains never matches a string claim.
+        assert!(!claim_match_holds(
+            &claims,
+            &m("department", "contains", serde_json::json!(["finance"]))
+        ));
+
+        // Dots traverse nested objects, as everywhere else in JWT config.
+        assert!(claim_match_holds(
+            &claims,
+            &m(
+                "realm_access.roles",
+                "contains",
+                serde_json::json!(["agent"])
+            )
+        ));
+
+        // Missing claims and non-string/array shapes never match.
+        assert!(!claim_match_holds(
+            &claims,
+            &m("missing", "exact", serde_json::json!(["x"]))
+        ));
+        assert!(!claim_match_holds(
+            &claims,
+            &m("count", "exact", serde_json::json!(["7"]))
+        ));
+    }
+
+    #[test]
+    fn mapping_selection_is_priority_ordered_and_provider_scoped() {
+        let snapshot = GatewaySnapshot::new();
+        let mk = |id: &str, m: serde_json::Value| {
+            snapshot
+                .claim_mappings
+                .insert(ResourceEntry::new(id, mapping(m), 1));
+        };
+        // Both match `department=finance`; the lower priority value wins.
+        mk(
+            "cm-broad",
+            serde_json::json!({
+                "name": "broad", "jwt_provider": "corp", "priority": 200,
+                "match": [{"claim": "department", "op": "exact", "values": ["finance"]}],
+                "resolve": {"api_key_id": "k-broad"},
+            }),
+        );
+        mk(
+            "cm-narrow",
+            serde_json::json!({
+                "name": "narrow", "jwt_provider": "corp", "priority": 100,
+                "match": [{"claim": "department", "op": "exact", "values": ["finance"]}],
+                "resolve": {"api_key_id": "k-narrow"},
+            }),
+        );
+        // Same priority as `narrow` but later in name order — the tie
+        // break is deterministic, never insertion order.
+        mk(
+            "cm-tie",
+            serde_json::json!({
+                "name": "zz-tie", "jwt_provider": "corp", "priority": 100,
+                "match": [{"claim": "department", "op": "exact", "values": ["finance"]}],
+                "resolve": {"api_key_id": "k-tie"},
+            }),
+        );
+        // Would win on priority, but is disabled.
+        mk(
+            "cm-off",
+            serde_json::json!({
+                "name": "off", "jwt_provider": "corp", "priority": 1, "enabled": false,
+                "match": [{"claim": "department", "op": "exact", "values": ["finance"]}],
+                "resolve": {"api_key_id": "k-off"},
+            }),
+        );
+        // Would win on priority, but belongs to another provider.
+        mk(
+            "cm-partner",
+            serde_json::json!({
+                "name": "partner-rule", "jwt_provider": "partner", "priority": 1,
+                "match": [{"claim": "department", "op": "exact", "values": ["finance"]}],
+                "resolve": {"api_key_id": "k-partner"},
+            }),
+        );
+
+        let claims = serde_json::json!({"department": "finance"});
+        assert_eq!(
+            matching_claim_mapping(&snapshot, "corp", &claims)
+                .unwrap()
+                .id,
+            "cm-narrow"
+        );
+        assert_eq!(
+            matching_claim_mapping(&snapshot, "partner", &claims)
+                .unwrap()
+                .id,
+            "cm-partner"
+        );
+        // Every condition must hold: a rule with one unmet condition is
+        // skipped even at the best priority.
+        let missing = serde_json::json!({"department": "hr"});
+        assert!(matching_claim_mapping(&snapshot, "corp", &missing).is_none());
+    }
+
+    #[test]
+    fn mapping_conditions_are_conjunctive() {
+        let snapshot = GatewaySnapshot::new();
+        snapshot.claim_mappings.insert(ResourceEntry::new(
+            "cm-and",
+            mapping(serde_json::json!({
+                "name": "and-rule", "jwt_provider": "corp",
+                "match": [
+                    {"claim": "department", "op": "exact", "values": ["finance"]},
+                    {"claim": "groups", "op": "contains", "values": ["mcp-admin"]},
+                ],
+                "resolve": {"api_key_id": "k-and"},
+            })),
+            1,
+        ));
+        let both = serde_json::json!({"department": "finance", "groups": ["mcp-admin"]});
+        let one = serde_json::json!({"department": "finance", "groups": ["dev"]});
+        assert!(matching_claim_mapping(&snapshot, "corp", &both).is_some());
+        assert!(matching_claim_mapping(&snapshot, "corp", &one).is_none());
+    }
+
+    // ── HMAC (shared-secret) providers ───────────────────────────────
+
+    const TEST_HMAC_SECRET: &str = "shared-secret-that-is-long-enough-32";
+
+    fn hmac_provider(extra: serde_json::Value) -> OidcProvider {
+        let mut doc = serde_json::json!({
+            "name": "hmac-idp",
+            "hmac_secret": TEST_HMAC_SECRET,
+        });
+        let (serde_json::Value::Object(base), serde_json::Value::Object(more)) = (&mut doc, extra)
+        else {
+            unreachable!("both fixtures are objects")
+        };
+        base.extend(more);
+        serde_json::from_value(doc).unwrap()
+    }
+
+    fn hs_sign(alg: Algorithm, secret: &str, claims: &serde_json::Value) -> String {
+        encode(
+            &Header::new(alg),
+            claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    fn hmac_claims(extra: serde_json::Value) -> serde_json::Value {
+        let mut claims = serde_json::json!({"sub": "agent-1", "exp": future()});
+        let (serde_json::Value::Object(base), serde_json::Value::Object(more)) =
+            (&mut claims, extra)
+        else {
+            unreachable!("both fixtures are objects")
+        };
+        base.extend(more);
+        claims
+    }
+
+    async fn verify(prov: &OidcProvider, token: &str) -> Result<serde_json::Value, &'static str> {
+        let header = jsonwebtoken::decode_header(token).unwrap();
+        verify_against_provider(prov, token, &header)
+            .await
+            .map_err(|(reason, _)| reason)
+    }
+
+    #[tokio::test]
+    async fn hmac_provider_without_issuer_or_audiences_ignores_both_claims() {
+        let prov = hmac_provider(serde_json::json!({}));
+        for alg in HMAC_ALGS {
+            // Neither claim present …
+            let bare = hs_sign(alg, TEST_HMAC_SECRET, &hmac_claims(serde_json::json!({})));
+            assert_eq!(verify(&prov, &bare).await.unwrap()["sub"], "agent-1");
+            // … and both present but matching nothing the provider
+            // configured, which is what `validate_aud = false` buys: left
+            // on, the library rejects any token that carries an `aud`.
+            let noisy = hs_sign(
+                alg,
+                TEST_HMAC_SECRET,
+                &hmac_claims(serde_json::json!({"iss": "https://whoever", "aud": "whatever"})),
+            );
+            assert_eq!(verify(&prov, &noisy).await.unwrap()["sub"], "agent-1");
+        }
+    }
+
+    #[tokio::test]
+    async fn hmac_provider_enforces_the_issuer_and_audience_it_does_pin() {
+        let prov = hmac_provider(serde_json::json!({
+            "issuer": "https://hmac.test",
+            "audiences": ["sibyl-gateway"],
+        }));
+        let good = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &hmac_claims(serde_json::json!({"iss": "https://hmac.test", "aud": "sibyl-gateway"})),
+        );
+        assert!(verify(&prov, &good).await.is_ok());
+
+        let wrong_iss = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &hmac_claims(serde_json::json!({"iss": "https://elsewhere", "aud": "sibyl-gateway"})),
+        );
+        assert_eq!(verify(&prov, &wrong_iss).await, Err("jwt_issuer_mismatch"));
+
+        let wrong_aud = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &hmac_claims(serde_json::json!({"iss": "https://hmac.test", "aud": "other"})),
+        );
+        assert_eq!(
+            verify(&prov, &wrong_aud).await,
+            Err("jwt_audience_mismatch")
+        );
+
+        // A pinned claim is required, not merely checked when present.
+        let no_iss = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &hmac_claims(serde_json::json!({"aud": "sibyl-gateway"})),
+        );
+        assert_eq!(verify(&prov, &no_iss).await, Err("jwt_missing_claim"));
+    }
+
+    #[tokio::test]
+    async fn hmac_provider_rejects_the_wrong_secret_and_an_expired_token() {
+        let prov = hmac_provider(serde_json::json!({}));
+        let wrong_secret = hs_sign(
+            Algorithm::HS256,
+            "another-secret-that-is-long-enough!!",
+            &hmac_claims(serde_json::json!({})),
+        );
+        assert_eq!(verify(&prov, &wrong_secret).await, Err("jwt_bad_signature"));
+
+        let expired = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &serde_json::json!({"sub": "agent-1", "exp": chrono::Utc::now().timestamp() - 3600}),
+        );
+        assert_eq!(verify(&prov, &expired).await, Err("jwt_expired"));
+    }
+
+    /// Algorithm confusion, both directions. Each provider's family is
+    /// decided by the row, before any key material exists, so neither
+    /// token can reach the other mode's verifier.
+    #[tokio::test]
+    async fn the_signature_family_is_pinned_per_provider() {
+        // An asymmetric token presented to a shared-secret provider.
+        let hmac = hmac_provider(serde_json::json!({}));
+        let rs = sign(&valid_claims());
+        assert_eq!(verify(&hmac, &rs).await, Err("jwt_alg_not_allowed"));
+
+        // An HS token presented to a JWKS provider — refused on the
+        // algorithm before the key endpoint is even consulted, which is
+        // what stops the published public key being used as a secret.
+        // The endpoint is deliberately unroutable: reaching it would
+        // surface as `jwks_unavailable` instead.
+        let mut jwks = base_provider();
+        jwks.jwks_uri = Some("http://127.0.0.1:1/jwks".to_string());
+        for alg in HMAC_ALGS {
+            let hs = hs_sign(alg, TEST_HMAC_SECRET, &valid_claims());
+            assert_eq!(verify(&jwks, &hs).await, Err("jwt_alg_not_allowed"));
+        }
+    }
+
+    #[test]
+    fn only_enabled_issuerless_hmac_providers_are_trial_candidates() {
+        let snapshot = GatewaySnapshot::new();
+        let add = |id: &str, doc: serde_json::Value| {
+            snapshot.oidc_providers.insert(ResourceEntry::new(
+                id,
+                serde_json::from_value::<OidcProvider>(doc).unwrap(),
+                1,
+            ));
+        };
+        add(
+            "p-b",
+            serde_json::json!({"name": "b-hmac", "hmac_secret": TEST_HMAC_SECRET}),
+        );
+        add(
+            "p-a",
+            serde_json::json!({"name": "a-hmac", "hmac_secret": TEST_HMAC_SECRET}),
+        );
+        // Pins an issuer: reachable only by `iss`, never by trial.
+        add(
+            "p-pinned",
+            serde_json::json!({
+                "name": "pinned-hmac", "issuer": "https://hmac.test",
+                "hmac_secret": TEST_HMAC_SECRET,
+            }),
+        );
+        // Disabled.
+        add(
+            "p-off",
+            serde_json::json!({
+                "name": "off-hmac", "hmac_secret": TEST_HMAC_SECRET, "enabled": false,
+            }),
+        );
+        // JWKS mode.
+        add(
+            "p-jwks",
+            serde_json::json!({
+                "name": "jwks", "issuer": "https://idp.test", "audiences": ["sibyl-gateway"],
+            }),
+        );
+
+        let candidates = issuerless_hmac_providers(&snapshot);
+        let names: Vec<&str> = candidates.iter().map(|e| e.value.name.as_str()).collect();
+        assert_eq!(names, vec!["a-hmac", "b-hmac"]);
+    }
+
+    #[test]
+    fn a_trial_path_denial_never_raises_the_log_level() {
+        // Configuring one issuer-less shared-secret provider makes the
+        // trial path reachable by ANY forged bearer, so a reason that is
+        // worth a `warn` when a configured issuer named the provider is
+        // pure scanner noise here. Without this, one such provider turns
+        // every internet probe into a WARN line and buries the real
+        // signal operators alert on.
+        for reason in [
+            "jwt_bad_signature",
+            "jwt_expired",
+            "jwt_missing_claim",
+            "jwt_audience_mismatch",
+        ] {
+            assert!(
+                logs_as_probe(false, reason),
+                "{reason} reached through the trial path must stay at debug"
+            );
+            assert!(
+                !logs_as_probe(true, reason),
+                "{reason} against a provider the token NAMED is worth a warn"
+            );
+        }
+        // The pre-existing probe classes keep their level either way.
+        for reason in [
+            "jwt_malformed",
+            "jwt_missing_issuer",
+            "jwt_untrusted_issuer",
+            "jwt_alg_not_allowed",
+        ] {
+            assert!(logs_as_probe(true, reason));
+            assert!(logs_as_probe(false, reason));
+        }
+        // A JWKS outage against a named provider is an operator signal.
+        assert!(!logs_as_probe(true, "jwks_unavailable"));
+    }
+
+    #[test]
+    fn a_claim_failure_outranks_another_candidate_s_signature_failure() {
+        // The candidate that does not hold the key fails on the
+        // signature for EVERY token, so its reason says nothing; the one
+        // that verified and then found the token expired is the answer
+        // the caller needs (an SDK refreshes on `jwt_expired`, not on
+        // `jwt_invalid`). Order of arrival must not decide it.
+        let mut first_signature = TrialFailure::default();
+        first_signature.record(("jwt_bad_signature", ProxyError::JwtInvalid));
+        first_signature.record(("jwt_expired", ProxyError::JwtExpired));
+        assert_eq!(first_signature.into_reported().unwrap().0, "jwt_expired");
+
+        let mut first_claim = TrialFailure::default();
+        first_claim.record(("jwt_expired", ProxyError::JwtExpired));
+        first_claim.record(("jwt_bad_signature", ProxyError::JwtInvalid));
+        assert_eq!(first_claim.into_reported().unwrap().0, "jwt_expired");
+
+        // An algorithm refusal is the same "not this provider's token"
+        // class as a signature failure.
+        let mut alg_then_claim = TrialFailure::default();
+        alg_then_claim.record(("jwt_alg_not_allowed", ProxyError::JwtInvalid));
+        alg_then_claim.record(("jwt_missing_claim", ProxyError::JwtInvalid));
+        assert_eq!(
+            alg_then_claim.into_reported().unwrap().0,
+            "jwt_missing_claim"
+        );
+
+        // With nothing but signature-class failures the first one stands.
+        let mut all_signature = TrialFailure::default();
+        all_signature.record(("jwt_bad_signature", ProxyError::JwtInvalid));
+        all_signature.record(("jwt_alg_not_allowed", ProxyError::JwtInvalid));
+        assert_eq!(
+            all_signature.into_reported().unwrap().0,
+            "jwt_bad_signature"
+        );
+
+        assert!(TrialFailure::default().into_reported().is_none());
+    }
+
+    #[tokio::test]
+    async fn every_issuerless_hmac_provider_is_tried_however_many_there_are() {
+        // No cap on the trial list: a provider past whatever the list
+        // used to be truncated to must still authenticate. Only the
+        // last of twelve holds the token's secret, so a truncated list
+        // would deny a token the configuration says is valid.
+        const COUNT: usize = 12;
+        let snapshot = GatewaySnapshot::new();
+        for i in 0..COUNT {
+            let last = i == COUNT - 1;
+            snapshot.oidc_providers.insert(ResourceEntry::new(
+                format!("p-{i:02}"),
+                serde_json::from_value::<OidcProvider>(serde_json::json!({
+                    "name": format!("hmac-{i:02}"),
+                    "hmac_secret": if last {
+                        TEST_HMAC_SECRET.to_string()
+                    } else {
+                        format!("decoy-secret-{i:02}-0000000000000000")
+                    },
+                }))
+                .unwrap(),
+                1,
+            ));
+        }
+
+        let candidates = issuerless_hmac_providers(&snapshot);
+        let names: Vec<&str> = candidates.iter().map(|e| e.value.name.as_str()).collect();
+        let expected: Vec<String> = (0..COUNT).map(|i| format!("hmac-{i:02}")).collect();
+        assert_eq!(names, expected);
+
+        // A replica of the request path's trial loop, not the loop
+        // itself — what this pins is that the twelfth candidate's
+        // secret is the only one that verifies, so the assertion above
+        // is about a list whose tail matters. Reinstating a bound at
+        // the real loop would leave this green; the e2e is what covers
+        // that, by driving a ninth-candidate token through the
+        // gateway.
+        let token = hs_sign(
+            Algorithm::HS256,
+            TEST_HMAC_SECRET,
+            &serde_json::json!({"sub": "agent-1", "exp": future()}),
+        );
+        let header = jsonwebtoken::decode_header(&token).unwrap();
+        let mut verified = None;
+        for entry in &candidates {
+            if verify_against_provider(&entry.value, &token, &header)
+                .await
+                .is_ok()
+            {
+                verified = Some(entry.value.name.clone());
+                break;
+            }
+        }
+        assert_eq!(verified.as_deref(), Some("hmac-11"));
+    }
+
+    #[test]
+    fn a_kid_less_token_is_tried_against_every_key_in_the_jwks() {
+        // No cap on the fall-through key list either: a set larger than
+        // it used to be truncated to must still verify a token signed
+        // by a key at the end of it. Nine keys that cannot verify
+        // anything precede the one that can.
+        let mut keys: Vec<serde_json::Value> = (0..9)
+            .map(|i| {
+                serde_json::json!({
+                    "kty": "RSA", "kid": format!("decoy-{i}"), "use": "sig", "alg": "RS256",
+                    "n": DECOY_RSA_MODULUS, "e": "AQAB",
+                })
+            })
+            .collect();
+        let real: serde_json::Value =
+            serde_json::from_str::<serde_json::Value>(TEST_JWKS).unwrap()["keys"][0].clone();
+        keys.push(real);
+        let jwks: JwkSet = serde_json::from_value(serde_json::json!({"keys": keys})).unwrap();
+
+        let candidates = candidate_keys(&jwks, None, Algorithm::RS256);
+        assert_eq!(candidates.len(), 10);
+
+        // Signed by the last key, and carrying no `kid` to shortcut to it.
+        let token = encode(
+            &Header::new(Algorithm::RS256),
+            &valid_claims(),
+            &encoding_key(),
+        )
+        .unwrap();
+        assert!(jsonwebtoken::decode_header(&token).unwrap().kid.is_none());
+        let claims =
+            validate_with_keys(&token, Algorithm::RS256, &base_provider(), &candidates).unwrap();
+        assert_eq!(claims["sub"], "agent-1");
+    }
+
+    #[test]
+    fn an_enabled_hmac_provider_alone_does_not_advertise_an_authorization_server() {
+        let snapshot = GatewaySnapshot::new();
+        snapshot.oidc_providers.insert(ResourceEntry::new(
+            "p-hmac",
+            hmac_provider(serde_json::json!({})),
+            1,
+        ));
+        // It still activates JWT authentication …
+        assert!(any_enabled_provider(&snapshot));
+        // … but has no authorization server to publish.
+        assert!(!any_enabled_jwks_provider(&snapshot));
+
+        snapshot
+            .oidc_providers
+            .insert(ResourceEntry::new("p-jwks", base_provider(), 1));
+        assert!(any_enabled_jwks_provider(&snapshot));
+    }
+}

@@ -1,0 +1,86 @@
+[package]
+name = "sibyl-gateway-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway — the single binary"
+
+[[bin]]
+name = "sibyl-gateway"
+path = "src/main.rs"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+sibyl-gateway-etcd = { path = "../sibyl-gateway-etcd" }
+sibyl-gateway-hub = { path = "../sibyl-gateway-hub" }
+sibyl-gateway-obs = { path = "../sibyl-gateway-obs" }
+sibyl-gateway-proxy = { path = "../sibyl-gateway-proxy" }
+sibyl-gateway-guardrails = { path = "../sibyl-gateway-guardrails" }
+sibyl-gateway-admin = { path = "../sibyl-gateway-admin" }
+sibyl-gateway-provider-openai = { path = "../sibyl-gateway-provider-openai" }
+sibyl-gateway-provider-anthropic = { path = "../sibyl-gateway-provider-anthropic" }
+sibyl-gateway-provider-vertex = { path = "../sibyl-gateway-provider-vertex" }
+sibyl-gateway-provider-azure-openai = { path = "../sibyl-gateway-provider-azure-openai" }
+sibyl-gateway-provider-bedrock = { path = "../sibyl-gateway-provider-bedrock" }
+sibyl-gateway-ratelimit = { path = "../sibyl-gateway-ratelimit" }
+sibyl-gateway-redis = { path = "../sibyl-gateway-redis" }
+sibyl-gateway-cache = { path = "../sibyl-gateway-cache", features = ["redis"] }
+tokio.workspace = true
+axum.workspace = true
+hyper.workspace = true
+# Unused in code; carries the h2 floor the drain's GOAWAY depends on.
+h2.workspace = true
+tokio-rustls.workspace = true
+tower.workspace = true
+rustls-pemfile.workspace = true
+rustls.workspace = true
+clap.workspace = true
+config.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `sibyl-gateway export` emits the resources file with the same YAML library the
+# file source parses with, so the output is guaranteed to re-parse.
+yaml-rust2.workspace = true
+anyhow.workspace = true
+# The usage sender ages a batch by its oldest event's `occurred_at`.
+chrono.workspace = true
+tracing.workspace = true
+etcd-client.workspace = true
+reqwest.workspace = true
+rcgen.workspace = true
+uuid.workspace = true
+hostname.workspace = true
+x509-parser = "0.16"
+# `SO_REUSEPORT` for the thread-per-core proxy listeners. `all` is
+# explicit because `set_reuse_port` lives behind it — it resolves
+# without the feature today only because other dependencies happen to
+# enable it on the same socket2, which a version bump would end.
+socket2 = { version = "0.5", features = ["all"] }
+# `TokioIo`/`TokioExecutor`/`TokioTimer` and the tower->hyper service
+# bridge the accept loop needs. Version dispatch is the gateway's own
+# (`Downstream`), so `server-auto` is deliberately not enabled.
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
+
+# jemalloc as the global allocator, only on the targets we ship and
+# bench (Linux glibc — the Docker image and both supported production
+# arches). Other targets (macOS dev builds, musl) keep the system
+# allocator rather than carry an allocator we never run in production.
+# The ctl crate exists for one runtime mallctl at startup (enable the
+# background purge thread, #968); it drags in the unmaintained `paste`
+# proc-macro (RUSTSEC-2024-0436, build-time only) — accepted until
+# jemalloc-ctl drops it upstream.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+tikv-jemallocator = "0.6"
+tikv-jemalloc-ctl = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
+# An HTTP/2 client, so the accept loop's retirement behaviour can be
+# asserted against a real peer rather than inspected.
+hyper = { workspace = true, features = ["client"] }
+http-body-util.workspace = true
+wiremock = "0.6"
+tokio = { workspace = true, features = ["test-util"] }

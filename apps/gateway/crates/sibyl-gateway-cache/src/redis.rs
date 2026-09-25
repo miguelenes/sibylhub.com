@@ -1,0 +1,257 @@
+//! Redis-backed exact-match response cache.
+//!
+//! Implements [`Cache`] against Redis through the shared
+//! [`sibyl_gateway_redis::RedisConn`], so the operator's `cache.redis.mode`
+//! (`single` / `cluster` / `sentinel`) is honored transparently — `GET`
+//! and `SET` route by their key on cluster, and sentinel failovers are
+//! recovered via [`sibyl_gateway_redis::RedisConn::note_error`].
+//!
+//! Storage shape: each entry is JSON-encoded `ChatResponse` stored under
+//! key `<prefix>:<fingerprint>` with a TTL set on insert (`SET ... EX ttl`).
+//! Reads are a single `GET`; misses return `Ok(None)`. Connection
+//! failures map to `CacheError::Backend` and are logged — the proxy
+//! treats them as cache misses and proceeds to the upstream.
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use redis::AsyncCommands;
+use sibyl_gateway_core::RedisConnConfig;
+use sibyl_gateway_hub::ChatResponse;
+use sibyl_gateway_obs::metrics::Metrics;
+use sibyl_gateway_redis::ConnSlot;
+
+use crate::cache::{Cache, CacheError};
+
+/// Default TTL — matches [`crate::DEFAULT_TTL`] so swapping memory ↔
+/// redis backends doesn't change observable behaviour for the common case.
+pub const DEFAULT_TTL: Duration = Duration::from_secs(300);
+/// Default key namespace. Keeps cache keys from colliding with anything
+/// else operators might run in the same Redis instance.
+pub const DEFAULT_PREFIX: &str = "sibyl-gateway:cache";
+
+#[derive(Clone)]
+pub struct RedisCache {
+    conn: ConnSlot,
+    ttl_secs: u64,
+    prefix: String,
+    /// Prometheus handle for `sibyl_gateway_redis_failures_total`. A failed read
+    /// degrades to a cache miss, which the outcome counter cannot tell
+    /// apart from a cold cache — this is where a failing backend shows.
+    metrics: Option<Metrics>,
+}
+
+impl std::fmt::Debug for RedisCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisCache")
+            .field("ttl_secs", &self.ttl_secs)
+            .field("prefix", &self.prefix)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RedisCache {
+    /// Connect on a policy of this cache's own.
+    ///
+    /// Only for a standalone exact cache. The gateway's cache subsystem
+    /// also holds a vector-search connection to the same `cache.redis`,
+    /// and the two must cool off together or one request pays the command
+    /// budget on each — use [`RedisCache::connect_with`] there.
+    pub async fn connect(cfg: &RedisConnConfig) -> Result<Self, CacheError> {
+        Self::connect_with(cfg, &sibyl_gateway_redis::FailurePolicy::new(cfg)).await
+    }
+
+    /// Connect sharing `policy` with the rest of the cache subsystem. The
+    /// topology (`single` / `cluster` / `sentinel`) is selected by `mode`;
+    /// see [`sibyl_gateway_redis::connect_with`].
+    pub async fn connect_with(
+        cfg: &RedisConnConfig,
+        policy: &sibyl_gateway_redis::FailurePolicy,
+    ) -> Result<Self, CacheError> {
+        // `connect_bounded`, not `connect_with`: the gateway awaits this
+        // before it binds a listener, and the driver's own retry schedule
+        // for the initial connect runs for minutes against an unreachable
+        // Redis — see `sibyl_gateway_redis::connect_bounded`.
+        let conn = sibyl_gateway_redis::connect_bounded(cfg, policy)
+            .await
+            .map_err(|e| CacheError::Backend(format!("redis connect: {e}")))?;
+        Ok(Self::with_slot(ConnSlot::filled(conn)))
+    }
+
+    /// Build the cache around a connection slot the caller owns.
+    ///
+    /// The slot may be EMPTY: a Redis that is unreachable when the
+    /// gateway starts must not keep it from binding its listeners, and
+    /// every operation below already fails open to a miss when it cannot
+    /// get a connection — which is exactly what an empty slot gives it.
+    /// The caller attaches the connection when Redis answers.
+    pub fn with_slot(conn: ConnSlot) -> Self {
+        Self {
+            conn,
+            ttl_secs: DEFAULT_TTL.as_secs(),
+            prefix: DEFAULT_PREFIX.into(),
+            metrics: None,
+        }
+    }
+
+    /// Count Redis operation failures on `metrics` (#1060).
+    pub fn with_metrics(mut self, metrics: Metrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    fn note_failure(&self, op: &str) {
+        if let Some(m) = &self.metrics {
+            m.record_redis_failure(op);
+        }
+    }
+
+    /// Override the instance **default** TTL — the fallback `put` uses
+    /// when a write carries no per-entry value. Per-policy writes go
+    /// through `put_with_ttl` and use their own `CachePolicy.ttl_seconds`
+    /// instead, ignoring this. Floors at 1s (`EX 0` expires immediately).
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.ttl_secs = ttl.as_secs().max(1);
+        self
+    }
+
+    /// Override the key namespace prefix. The full key is
+    /// `<prefix>:<fingerprint>`.
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
+        self
+    }
+
+    /// Namespace the prefix by the DP's environment id. The response-cache
+    /// key is a content-only fingerprint (`CacheKey`, no caller/env in it),
+    /// so two environments pointed at the same (user-provided) Redis would
+    /// otherwise serve each other's cached answers for an identical request.
+    /// Scoping the prefix to `<prefix>:<env_id>` keeps them isolated. Empty
+    /// `env_id` (standalone / v2 — no env cert) leaves the prefix unchanged.
+    pub fn with_env_namespace(mut self, env_id: &str) -> Self {
+        if !env_id.is_empty() {
+            self.prefix = format!("{}:{}", self.prefix, env_id);
+        }
+        self
+    }
+
+    fn full_key(&self, key: &str) -> String {
+        format!("{}:{}", self.prefix, key)
+    }
+}
+
+#[async_trait]
+impl Cache for RedisCache {
+    async fn get(&self, key: &str) -> Result<Option<ChatResponse>, CacheError> {
+        let mut conn = match self.conn.acquire().await {
+            Ok(c) => c,
+            Err(e) => {
+                self.note_failure("cache_get");
+                return Err(CacheError::Backend(format!("redis acquire: {e}")));
+            }
+        };
+        let full = self.full_key(key);
+        let raw: Option<String> = match conn.get(&full).await {
+            Ok(v) => v,
+            Err(e) => {
+                self.note_failure("cache_get");
+                self.conn.note_error().await;
+                return Err(CacheError::Backend(format!("redis GET: {e}")));
+            }
+        };
+        match raw {
+            None => Ok(None),
+            Some(json) => serde_json::from_str::<ChatResponse>(&json)
+                .map(Some)
+                .map_err(|e| CacheError::Backend(format!("redis decode: {e}"))),
+        }
+    }
+
+    async fn put(&self, key: &str, value: ChatResponse) -> Result<(), CacheError> {
+        // No per-entry TTL supplied: fall back to the instance default.
+        self.put_with_ttl(key, value, Duration::from_secs(self.ttl_secs))
+            .await
+    }
+
+    /// Honors the caller-supplied per-entry TTL — the matched
+    /// `CachePolicy.ttl_seconds` the proxy threads in — rather than the
+    /// instance default, so a Redis-backed policy expires its entries on
+    /// its own schedule. Floors at 1s: Redis `EX 0` expires immediately,
+    /// turning every entry into a guaranteed miss.
+    async fn put_with_ttl(
+        &self,
+        key: &str,
+        value: ChatResponse,
+        ttl: Duration,
+    ) -> Result<(), CacheError> {
+        let json = serde_json::to_string(&value)
+            .map_err(|e| CacheError::Backend(format!("redis encode: {e}")))?;
+        let mut conn = match self.conn.acquire().await {
+            Ok(c) => c,
+            Err(e) => {
+                self.note_failure("cache_put");
+                return Err(CacheError::Backend(format!("redis acquire: {e}")));
+            }
+        };
+        let full = self.full_key(key);
+        let secs = ttl.as_secs().max(1);
+        if let Err(e) = conn.set_ex::<_, _, ()>(&full, json, secs).await {
+            self.note_failure("cache_put");
+            self.conn.note_error().await;
+            return Err(CacheError::Backend(format!("redis SET EX: {e}")));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_key_concatenates_prefix() {
+        // Construct a RedisCache without actually opening a connection by
+        // using a dummy ConnectionManager via mem::forget? No — we'd leak.
+        // Easier: test the prefix logic via a free function.
+        assert_eq!(
+            prefix_join("sibyl-gateway:cache", "ab12"),
+            "sibyl-gateway:cache:ab12"
+        );
+        assert_eq!(prefix_join("", "x"), ":x");
+    }
+
+    fn prefix_join(prefix: &str, key: &str) -> String {
+        format!("{prefix}:{key}")
+    }
+
+    #[test]
+    fn with_ttl_floors_at_one_second() {
+        // TTL of zero would mean "expire immediately" in Redis, which
+        // makes every entry useless. Floor at 1s.
+        // We can't construct RedisCache without a connection, so verify
+        // the math directly.
+        let secs = Duration::from_secs(0).as_secs().max(1);
+        assert_eq!(secs, 1);
+        let secs = Duration::from_millis(500).as_secs().max(1);
+        assert_eq!(secs, 1);
+        let secs = Duration::from_secs(60).as_secs().max(1);
+        assert_eq!(secs, 60);
+    }
+
+    #[tokio::test]
+    async fn connect_to_invalid_url_errors() {
+        let cfg = sibyl_gateway_core::RedisConnConfig {
+            mode: sibyl_gateway_core::RedisMode::Single,
+            url: Some("not-a-url".into()),
+            ..Default::default()
+        };
+        let err = RedisCache::connect(&cfg).await.unwrap_err();
+        let CacheError::Backend(msg) = err;
+        assert!(msg.contains("redis"));
+    }
+
+    // The full integration path (real Redis round-trip) lives in
+    // `tests/redis_integration.rs` and is opt-in via the `CACHE_TEST_REDIS_URL`
+    // env var so the unit-test job stays hermetic. CI runs Redis as a
+    // service so the integration test exercises the happy path.
+}

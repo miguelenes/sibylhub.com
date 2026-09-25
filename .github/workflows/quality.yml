@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: rustfmt, clippy
       - uses: shivammathur/setup-php@v2
@@ -38,6 +38,10 @@ jobs:
           composer install --no-interaction --prefer-dist --optimize-autoloader
           php artisan key:generate --ansi
           php artisan migrate --force --ansi
+      # The gateway's Cargo workspace is part of the root turbo graph, and its
+      # lint/typecheck/test/build tasks need protoc for etcd-client's build
+      # script. Reuse the gateway-owned composite action.
+      - uses: ./apps/gateway/.github/actions/setup-protoc
       - run: pnpm check:config
       - run: pnpm lint
       - run: pnpm typecheck

@@ -1,0 +1,222 @@
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build for the sibyl-gateway AI gateway.
+#
+# The workspace pins rustc via rust-toolchain.toml (currently 1.93.1).
+# We use the latest Debian-based official Rust image, then copy the
+# single `sibyl-gateway` binary into a slim runtime image.
+#
+# BuildKit is required (the `--mount=type=cache` directives rely on
+# it). On recent Docker Desktop / Docker CE, BuildKit is the default;
+# on older clients run:  DOCKER_BUILDKIT=1 docker build -t sibyl-gateway:dev .
+#
+# Build:
+#   docker build -t sibyl-gateway:dev .
+#   docker build --build-arg PGO=off -t sibyl-gateway:dev .   # quick local build, skips PGO
+#
+# Run, standalone (mount your own config):
+#   docker run --rm -v $(pwd)/config.example.yaml:/etc/sibyl-gateway/config.yaml \
+#     sibyl-gateway:dev
+#
+# Run, managed (connected to AISIX Cloud with env-var overrides):
+#   docker run --rm \
+#     -e SIBYL_GATEWAY_CONFIG_PATH=/etc/sibyl-gateway/config.managed.yaml \
+#     -e SIBYL_GATEWAY_MANAGED__CP_BASE_URL \
+#     -e SIBYL_GATEWAY_MANAGED__CP_ETCD_ENDPOINT \
+#     -e SIBYL_GATEWAY_MANAGED__CP_CERT_PEM \
+#     -e SIBYL_GATEWAY_MANAGED__CP_KEY_PEM \
+#     -e SIBYL_GATEWAY_MANAGED__CP_CA_PEM \
+#     -v sibyl-gateway-mtls:/var/lib/sibyl-gateway \
+#     sibyl-gateway:dev
+# The volume preserves the materialized mTLS bundle and gateway identity across
+# container restarts.
+
+# --- Stage 1: build ----------------------------------------------------------
+# Trixie fixes the glibc the release binary links against, and the
+# runtime stage must stay on the same-or-newer glibc — so the two base
+# images only ever move together.
+FROM rust:1.93-trixie AS builder
+
+# protoc is required by dependencies that use prost/tonic-build.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Short git sha stamped into the binary (heartbeat `version` =
+# `<version>+sha-<BUILD_SHA>`) so a running DP can be matched to
+# its image tag. CI passes the same short sha that tags the image;
+# plain `docker build` (no arg) produces a binary that reports the bare
+# crate version.
+ARG BUILD_SHA=
+ENV SIBYL_GATEWAY_BUILD_SHA=$BUILD_SHA
+
+# Release version stamped into the binary. CI derives this from the
+# release tag (v0.4.0 → 0.4.0), so `sibyl-gateway --version`, the `Server`
+# response header, and the heartbeat dp_version always self-report the
+# tagged version — no manual Cargo.toml bump at release time. Empty
+# (non-release / local build) falls back to the workspace crate version.
+ARG BUILD_VERSION=
+ENV SIBYL_GATEWAY_BUILD_VERSION=$BUILD_VERSION
+
+# BuildKit cache mounts carry `~/.cargo/registry` + `target/` across
+# builds, so changes to source files still reuse compiled dependencies.
+# We could split dep-build from source-build via a manifests-only warm
+# stage, but the cache mounts give us ~95% of the same win with half
+# the Dockerfile complexity. Source copy is a single layer.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml ./
+COPY crates ./crates
+# `crates/sibyl-gateway-admin/src/openapi.rs` uses `include_str!` to embed
+# every `schemas/resources/*.schema.json` at compile time, so the
+# Docker context must carry this directory or the release build fails.
+COPY schemas ./schemas
+
+# PGO training assets (#967): trainer tool + train.sh. Copied separately from
+# crates/ so editing training assets doesn't invalidate the dependency layers
+# above.
+COPY bench/pgo-training ./bench/pgo-training
+
+# Profile-guided optimization gate. The default stays ON so a bare
+# `docker build` — a local release rehearsal, a one-off customer image —
+# produces the same shape as the published artifact rather than a silently
+# un-optimized one; opting out is explicit.
+#
+# CI inverts that default and passes PGO=on only for a STABLE release tag
+# (vX.Y.Z). PR, main/:dev and `-rc.N` builds pass PGO=off: PGO cost ~20 min
+# on every one of the ~40 main pushes per release cycle, and none of those
+# images are the artifact a customer runs. See "Decide PGO build mode" in
+# .github/workflows/docker-image.yml and the PGO section of RELEASING.md.
+ARG PGO=on
+
+# `--locked` forces the build to use the exact versions in Cargo.lock —
+# fails fast if the lockfile is stale rather than silently resolving
+# fresh deps in CI.
+#
+# PGO=on runs the three-phase build (#967):
+#   A. instrumented build (-Cprofile-generate) in its own target dir;
+#   B. train.sh drives the committed 12-shape matrix through the
+#      instrumented gateway against the trainer's local mock, then merges
+#      the .profraw files with the pinned toolchain's own llvm-profdata
+#      (llvm-tools-preview — exact LLVM match with rustc, no extra deps);
+#   C. optimized build (-Cprofile-use) in a third target dir, so profile
+#      builds never share cargo fingerprints with plain builds.
+# FAIL-CLOSED: any phase failing fails this RUN and nothing is shipped.
+# The proof marker (pgo-verified.json) is written only after phase C
+# succeeds; the push workflows assert it before trusting the image.
+# The merged profile is content-addressed (merged-<sha>.profdata) because
+# cargo fingerprints the -Cprofile-use PATH, not the file content — a
+# retrained profile at a fixed path would silently reuse stale artifacts
+# from the persistent target cache mount.
+#
+# linux/arm64 (AISIX-Cloud#903) carries two constraints:
+#   - jemalloc bakes the build host's page size into the binary, so a
+#     4K-page build aborts at startup on a 64K-page kernel. Building with
+#     lg-page 16 yields a binary that runs on both (see
+#     crates/sibyl-gateway-server/src/main.rs). Keyed on TARGETARCH below so a
+#     plain `docker build` on an arm64 host is right too, not only CI.
+#   - PGO training runs the instrumented binary, so it needs a NATIVE
+#     arm64 builder — it cannot self-train under emulation. CI gives each
+#     architecture its own runner for that reason; do not reintroduce QEMU.
+# Supplied by BuildKit; an absent value trips `set -u` below rather than
+# silently producing a 4K-page arm64 binary.
+ARG TARGETARCH
+
+# The cache mounts are keyed per architecture. A cache mount's default id is
+# its target path, so a single builder asked for both platforms at once
+# (`docker build --platform linux/amd64,linux/arm64 .`) would run the two
+# stage variants against one `/src/target` — where they share a cargo lock
+# and both write `release/sibyl-gateway`, so the copy below can pick up the other
+# architecture's binary.
+RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=target-${TARGETARCH},target=/src/target \
+    --mount=type=cache,id=target-pgo-gen-${TARGETARCH},target=/src/target-pgo-gen \
+    --mount=type=cache,id=target-pgo-${TARGETARCH},target=/src/target-pgo \
+    set -eu; \
+    if [ "$TARGETARCH" = "arm64" ]; then export JEMALLOC_SYS_WITH_LG_PAGE=16; fi; \
+    mkdir -p /usr/local/share/sibyl-gateway; \
+    if [ "$PGO" = "on" ]; then \
+        RUSTFLAGS="-Cprofile-generate=/tmp/pgo-data" CARGO_TARGET_DIR=/src/target-pgo-gen \
+            cargo build --locked --release --bin sibyl-gateway; \
+        cargo build --locked --release \
+            --manifest-path bench/pgo-training/trainer/Cargo.toml; \
+        bash bench/pgo-training/train.sh /src/target-pgo-gen/release/sibyl-gateway /tmp/pgo-data; \
+        PROFDATA="$(ls /tmp/pgo-data/merged-*.profdata)"; \
+        RUSTFLAGS="-Cprofile-use=$PROFDATA" CARGO_TARGET_DIR=/src/target-pgo \
+            cargo build --locked --release --bin sibyl-gateway; \
+        cp /src/target-pgo/release/sibyl-gateway /usr/local/bin/sibyl-gateway; \
+        cp /tmp/pgo-data/train-manifest.json /usr/local/share/sibyl-gateway/pgo-verified.json; \
+    elif [ "$PGO" = "off" ]; then \
+        cargo build --locked --release --bin sibyl-gateway; \
+        cp target/release/sibyl-gateway /usr/local/bin/sibyl-gateway; \
+    else \
+        echo "unsupported PGO value: '$PGO' (use on|off)" >&2; \
+        exit 2; \
+    fi
+
+# --- Stage 2: runtime --------------------------------------------------------
+# trixie-slim to match the builder's glibc (see the builder stage note);
+# a binary linked against glibc 2.41 symbols cannot run on bookworm.
+FROM debian:trixie-slim AS runtime
+
+# Ownership-verification label for the MCP Registry: when this image is
+# published as an MCP server entry, the registry requires this label to
+# match the server name in server.json.
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin sibyl-gateway \
+    && mkdir -p /etc/sibyl-gateway/tls /var/lib/sibyl-gateway \
+    && chown -R sibyl-gateway:sibyl-gateway /etc/sibyl-gateway /var/lib/sibyl-gateway
+
+# Install the binary and grant CAP_NET_BIND_SERVICE as a file
+# capability so the non-root user can bind privileged ports (e.g.
+# listening on :80/:443 with Kubernetes hostNetwork). Install + setcap
+# happen in one RUN (bind-mount, no COPY) so the binary isn't
+# duplicated across layers by the xattr change. Caveat: with the
+# effective bit set, exec fails outright if NET_BIND_SERVICE is
+# missing from the container's bounding set — it is in the default
+# Docker/containerd cap set, but `capabilities: {drop: [ALL]}` pod
+# specs must add NET_BIND_SERVICE back.
+# The PGO proof marker (#967) ships with the image: written by the builder
+# only after a successful profile-optimized build, asserted by the push
+# workflows before an image is trusted. Absent on PGO=off (PR smoke) builds.
+RUN --mount=type=bind,from=builder,source=/usr/local/bin/sibyl-gateway,target=/mnt/sibyl-gateway \
+    --mount=type=bind,from=builder,source=/usr/local/share/sibyl-gateway,target=/mnt/sibyl-gateway-share \
+    apt-get update \
+    && apt-get install -y --no-install-recommends libcap2-bin \
+    && install -m 0755 /mnt/sibyl-gateway /usr/local/bin/sibyl-gateway \
+    && setcap 'cap_net_bind_service=+ep' /usr/local/bin/sibyl-gateway \
+    && mkdir -p /usr/local/share/sibyl-gateway \
+    && if [ -f /mnt/sibyl-gateway-share/pgo-verified.json ]; then \
+         install -m 0644 /mnt/sibyl-gateway-share/pgo-verified.json /usr/local/share/sibyl-gateway/pgo-verified.json; \
+       fi \
+    && apt-get purge -y --auto-remove libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bake the managed-mode bootstrap config so gateways managed by
+# AISIX Cloud can `docker run` without mounting a configuration file.
+# Environment variables provide the control-plane endpoints and gateway mTLS
+# certificate bundle.
+COPY config.managed.yaml /etc/sibyl-gateway/config.managed.yaml
+
+# Entrypoint script picks the config file via SIBYL_GATEWAY_CONFIG_PATH so the
+# same image serves both standalone (mount your config at the default
+# path) and managed (point SIBYL_GATEWAY_CONFIG_PATH at the baked file).
+COPY docker/entrypoint.sh /usr/local/bin/sibyl-gateway-entrypoint
+RUN chmod 0755 /usr/local/bin/sibyl-gateway-entrypoint
+
+# Proxy + admin + metrics listeners from config.example.yaml.
+EXPOSE 3000 3001 9090
+
+# Numeric, not `sibyl-gateway`: kubelet resolves `runAsNonRoot: true` against the
+# image's configured user, and a name it cannot prove is non-root fails
+# the container at admission with CreateContainerConfigError. The uid is
+# the `sibyl-gateway` passwd entry's, so the default runtime identity — and the
+# ownership of /etc/sibyl-gateway and /var/lib/sibyl-gateway — is unchanged.
+USER 10001
+
+# tini forwards signals cleanly to the sibyl-gateway process; entrypoint script
+# resolves the config path from env, then execs the binary.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sibyl-gateway-entrypoint"]

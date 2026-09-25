@@ -1,0 +1,806 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sibylhub.com/schema/candidate-ingestion/1.0",
+  "title": "SibylHub candidate-ingestion artifact",
+  "type": "object",
+  "required": [
+    "artifactKind",
+    "schemaVersion",
+    "crawl",
+    "sourceCoverage",
+    "candidates",
+    "evidence",
+    "diagnostics",
+    "telemetry",
+    "contentIdentity"
+  ],
+  "properties": {
+    "artifactKind": {
+      "const": "candidate-ingestion"
+    },
+    "schemaVersion": {
+      "const": "candidate-ingestion/1.0"
+    },
+    "crawl": {
+      "type": "object",
+      "required": [
+        "id",
+        "startedAt",
+        "configHash",
+        "classifierVersions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "configHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "classifierVersions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourceCoverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sourceId",
+          "ecosystem",
+          "status",
+          "rankBasis",
+          "discovered",
+          "deduplicated",
+          "detailed",
+          "normalized",
+          "classified",
+          "conflicted",
+          "synchronized",
+          "skipped",
+          "failed"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ecosystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "status": {
+            "enum": [
+              "success",
+              "partial",
+              "failed",
+              "skipped",
+              "unsupported"
+            ]
+          },
+          "rankBasis": {
+            "enum": [
+              "global",
+              "source-ranked",
+              "seed-ranked",
+              "curated"
+            ]
+          },
+          "seed": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "discovered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deduplicated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detailed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "normalized": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "classified": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "conflicted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "synchronized": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "candidateId",
+          "ecosystem",
+          "purl",
+          "name",
+          "evidenceIds",
+          "rank",
+          "detections",
+          "resolution"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ecosystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "purl": {
+            "type": "object",
+            "required": [
+              "type",
+              "name",
+              "version"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9.+-]*$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S+$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S+$"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S+$"
+              },
+              "qualifiers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "subpath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S+$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "namespace": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S+$"
+          },
+          "releaseVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "homepageUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "repositoryUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "license": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 10000
+          },
+          "keywords": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "downloads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sourceId",
+                "value",
+                "period",
+                "sampledAt",
+                "evidenceIds"
+              ],
+              "properties": {
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "value": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "period": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sampledAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "priorSample": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "stars": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sourceId",
+                "value",
+                "sampledAt",
+                "evidenceIds"
+              ],
+              "properties": {
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "value": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sampledAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "repositoryUrl": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "minItems": 1
+          },
+          "rank": {
+            "type": "object",
+            "required": [
+              "sourceId",
+              "basis"
+            ],
+            "properties": {
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "basis": {
+                "enum": [
+                  "global",
+                  "source-ranked",
+                  "seed-ranked",
+                  "curated"
+                ]
+              },
+              "position": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "additionalProperties": false
+          },
+          "detections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "name",
+                "confidence",
+                "classifierVersion",
+                "rationale",
+                "evidenceIds"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "framework",
+                    "category"
+                  ]
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "confidence": {
+                  "enum": [
+                    "unknown",
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "classifierVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "rationale": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "minItems": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "choiceAssessment": {
+            "type": "object",
+            "required": [
+              "status",
+              "summary",
+              "factors",
+              "evidenceIds"
+            ],
+            "properties": {
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "advisory",
+                  "insufficient-data",
+                  "review-required"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "factors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "weight",
+                    "evidenceIds"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "weight": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "evidenceIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "evidenceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "value",
+                "sourceId",
+                "evidenceIds"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "category",
+                    "alternative",
+                    "comparison",
+                    "pro",
+                    "con",
+                    "opinion",
+                    "repository",
+                    "license",
+                    "stars"
+                  ]
+                },
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "resolution": {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "unresolved",
+                  "partial",
+                  "resolved"
+                ]
+              },
+              "packageManagerId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "packageCategoryId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "sourceId",
+          "sourceKind",
+          "sourceUrl",
+          "retrievedAt",
+          "contentHash",
+          "evidenceType"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceKind": {
+            "enum": [
+              "registry",
+              "curated",
+              "repository",
+              "documentation",
+              "classifier",
+              "firecrawl"
+            ]
+          },
+          "sourceUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "retrievedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "contentHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "evidenceType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "locator": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "rawResponse": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "severity",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "required": [
+        "discovered",
+        "deduplicated",
+        "detailed",
+        "normalized",
+        "classified",
+        "conflicted",
+        "synchronized",
+        "skipped",
+        "failed",
+        "requests"
+      ],
+      "properties": {
+        "discovered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deduplicated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "detailed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "normalized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "classified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conflicted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "synchronized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sourceId",
+              "requestClass",
+              "attempts",
+              "durationMs"
+            ],
+            "properties": {
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestClass": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 599
+              },
+              "durationMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "pageOrSeed": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "contentIdentity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

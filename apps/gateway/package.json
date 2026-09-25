@@ -1,0 +1,16 @@
+{
+  "name": "gateway",
+  "private": true,
+  "scripts": {
+    "dev": "sh -c 'test -f config.local.yaml || { echo \"gateway dev requires config.local.yaml (copy config.example.yaml)\" >&2; exit 1; }; exec cargo run -p sibyl-gateway-server --bin sibyl-gateway --locked -- --config config.local.yaml'",
+    "build": "cargo build -p sibyl-gateway-server --bin sibyl-gateway --release --locked",
+    "lint": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "typecheck": "cargo check --workspace --all-targets --locked",
+    "format": "cargo fmt --all -- --check",
+    "test": "cargo test --workspace --locked",
+    "test:cov": "cargo test --workspace --locked",
+    "test:e2e": "sh -c 'cd tests/e2e && npx -y pnpm@11 install --no-frozen-lockfile && npx -y pnpm@11 test'",
+    "test:mcp-conformance": "bash scripts/mcp-conformance.sh",
+    "clean": "cargo clean -p sibyl-gateway-server"
+  }
+}

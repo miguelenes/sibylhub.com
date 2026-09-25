@@ -1,0 +1,54 @@
+{
+  "$schema": "https://www.schemastore.org/package.json",
+  "name": "@sibylhub/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0 <25"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm build:js && pnpm build:types",
+    "build:js": "tsup",
+    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
+    "lint": "tsc --noEmit --project tsconfig.json",
+    "format": "prettier --check src *.json *.ts",
+    "format:write": "prettier --write src *.json *.ts",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "clean": "rm -rf dist coverage",
+    "crawl:all": "node dist/cli.js run --ecosystems all",
+    "crawl:npm": "node dist/cli.js run --ecosystems npm",
+    "crawl:packagist": "node dist/cli.js run --ecosystems packagist",
+    "crawl:pypi": "node dist/cli.js run --ecosystems pypi",
+    "crawl:crates": "node dist/cli.js run --ecosystems crates",
+    "crawl:libs-tech": "node dist/cli.js run --ecosystems libs-tech"
+  },
+  "dependencies": {
+    "@sibylhub/schemas": "workspace:*",
+    "cheerio": "1.2.0",
+    "commander": "15.0.0",
+    "p-queue": "9.3.3"
+  },
+  "devDependencies": {
+    "@sibylhub/typescript-config": "workspace:*",
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "prettier": "3.9.8",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

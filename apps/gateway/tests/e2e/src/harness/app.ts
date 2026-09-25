@@ -1,0 +1,679 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { stringify as yamlStringify } from "yaml";
+
+import { pickFreePorts } from "./ports.js";
+import { EtcdClient, etcdEndpoint } from "./etcd.js";
+import { harnessRequest } from "./http.js";
+
+export interface AppOverrides {
+  /**
+   * Whether to bind the admin listener. **Defaults to `false`** — the
+   * gateway runs with `admin.enabled = false`, no admin listener bound,
+   * mirroring the post-removal world; readiness gates on the proxy
+   * `/livez` plus the metrics listener, and `adminUrl`/`adminKey` are
+   * still returned but point at an unbound port. Resources are seeded
+   * through `SeedClient`/`EtcdClient`, never the Admin API.
+   *
+   * Only tests whose subject IS the Admin API read surface (admin
+   * auth, the removed-write 405/404 contract, health, OpenAPI,
+   * status-equivalence) opt back in with `admin: true`.
+   */
+  admin?: boolean;
+  /** Inserted into `admin.admin_keys`. Defaults to a fresh random key. */
+  adminKey?: string;
+  /** Whether to enable the Prometheus scrape endpoint. Defaults to true. */
+  prometheus?: boolean;
+  /** Prometheus scrape path. Defaults to `/metrics`. */
+  prometheusPath?: string;
+  /** Extra raw config keys merged into the YAML at the top level. */
+  extra?: Record<string, unknown>;
+  /**
+   * `proxy.real_ip` block (#492). Merged into the base proxy config so
+   * the listener addr is preserved. Configures nginx-style trusted-proxy
+   * real-client-IP resolution from `x-forwarded-for`.
+   */
+  realIp?: {
+    trusted_proxies?: string[];
+    recursive?: boolean;
+    header?: string;
+  };
+  /**
+   * `proxy.request_id` block (AISIX-Cloud#1288). Merged into the base
+   * proxy config like `realIp`. Names the inbound headers a caller may
+   * supply its own request id in; omitted, the binary's default
+   * (`["x-sibylhub-request-id"]`) applies.
+   */
+  requestId?: { accept_headers?: string[] };
+  /**
+   * `proxy.url_rewrites` block. Merged into the base proxy config (like
+   * `realIp`) so the listener addr is preserved. Entry-level path
+   * rewriting: first matching rule wins, `rewrite` replaces the matched
+   * portion of the path.
+   */
+  urlRewrites?: Array<{ name?: string; hosts?: string[]; match: string; rewrite: string }>;
+  /**
+   * `proxy.listeners` — the COMPLETE set of proxy listeners, replacing
+   * the single `proxy.addr` one (AISIX-Cloud#1662). One harness-picked
+   * free port per entry; the bound URLs come back as
+   * `SpawnedApp.proxyUrls`, in the same order, `https://` for an entry
+   * that carries `tls`.
+   *
+   * `proxy.addr` is still written — the field stays required — and is
+   * NOT bound. At least one entry has to be plaintext: readiness and
+   * `SpawnedApp.proxyUrl` use the first one that is, and a set with no
+   * plaintext listener would leave the harness probing a port nothing
+   * serves plain HTTP on.
+   */
+  proxyListeners?: Array<{ tls?: { cert_file: string; key_file: string } }>;
+  /**
+   * `proxy.request_body_limit_bytes`. A dedicated override (like
+   * `realIp`) because `extra` replaces whole top-level blocks and the
+   * proxy block carries the harness-picked listener addr. `0` disables
+   * the cap — the shipped default; the harness pins 10 MiB unless a
+   * test overrides it so the existing 413 suite keeps its subject.
+   */
+  requestBodyLimitBytes?: number;
+  /**
+   * Extra environment variables for the spawned binary, applied AFTER the
+   * `SIBYL_GATEWAY_*` strip. Use for non-config secrets the DP reads from its own
+   * environment rather than from the kine config — e.g.
+   * `SLS_CRED_<REF>_AK_ID` / `_AK_SECRET` for an `aliyun_sls` exporter, whose
+   * AccessKey deliberately never travels on the config path.
+   */
+  extraEnv?: Record<string, string>;
+  /**
+   * Start the binary with NO `--config` argument, handing it the generated
+   * config's path through `SIBYL_GATEWAY_CONFIG` instead — the clap env fallback a
+   * `command:`-less container image relies on. Off by default: every other
+   * spec should exercise the argument, which is what the entrypoint passes.
+   */
+  configViaEnv?: boolean;
+  /**
+   * `proxy.thread_per_core`. Omitted, the binary picks its platform
+   * default, which is what the suite should normally exercise.
+   *
+   * Pin it to `false` in a test whose subject is per-connection or
+   * per-pool state: with thread-per-core serving the kernel picks which
+   * worker accepts each connection, and each worker keeps its own
+   * upstream pool, so a count taken across two calls depends on that
+   * choice. Pinning keeps such an assertion measuring its own subject.
+   */
+  threadPerCore?: boolean;
+  /**
+   * Log level for the spawned binary. Defaults to `warn` — quiet enough
+   * that the suite's output stays readable. Tests that assert on a line
+   * the gateway emits at `info` (the access log) raise it here.
+   *
+   * Applied to BOTH `observability.log_level` and `RUST_LOG`: the DP's
+   * `init_tracing` tries `EnvFilter::try_from_default_env()` first, so
+   * the env var wins and setting the config key alone would silently do
+   * nothing. It also outranks an ambient `RUST_LOG`, so a developer
+   * debugging with `RUST_LOG=error` can't turn a test's subject off.
+   */
+  logLevel?: string;
+  /**
+   * `observability.metrics.client_type_rules` (AISIX-Cloud#1045): operator
+   * UA→client_type regex rules, tried before the built-in allowlist.
+   * A dedicated override because `extra` replaces whole top-level blocks
+   * and the observability block carries the harness-picked metrics port.
+   */
+  clientTypeRules?: Array<{ pattern: string; client: string }>;
+  /**
+   * FILE MODE: contents of a standalone `resources.yaml`. When set, the
+   * generated config carries `resources_file` (pointing at this content
+   * written into the tmp dir) and NO `etcd` section — the gateway loads
+   * every resource from the file and etcd is never contacted (no ping,
+   * no prefix cleanup). Rewrite the file at `SpawnedApp.resourcesPath`
+   * and send SIGHUP to exercise reloads.
+   */
+  resourcesFile?: string;
+  /**
+   * Reuse a fixed etcd prefix instead of generating a fresh one. For
+   * restart scenarios: `stop()` the first app (keeps etcd data), then
+   * spawn a second one with the same prefix so it loads the survivor
+   * state. The LAST app spawned on the prefix should `exit()` to clean
+   * it up.
+   */
+  etcdPrefix?: string;
+  /**
+   * Whether readiness waits for the proxy `/livez` to answer. **Defaults
+   * to `true`**; `false` skips that gate.
+   *
+   * The proxy listener does not bind until the gateway has applied its
+   * first configuration, so a spec that deliberately starves the gateway
+   * of configuration would otherwise fail in `spawnApp` instead of in its
+   * own assertions. Readiness then rests on the metrics listener, which
+   * binds regardless of the configuration source — so `prometheus` (or
+   * `admin`) must stay on, and `spawnApp` rejects the combination that
+   * would leave it with nothing to wait for.
+   */
+  awaitProxyListener?: boolean;
+  /**
+   * Whether readiness waits for ANY listener. **Defaults to `true`.**
+   *
+   * `false` returns as soon as the process is spawned, for the one shape
+   * `awaitProxyListener` cannot express: a gateway that binds nothing at
+   * all. The boot dials etcd before any listener is opened, so an
+   * endpoint that accepts TCP and then goes silent leaves the process
+   * running with no port at all — which now takes an explicit
+   * `dial_timeout_ms: 0`, since the key defaults to 5000 ms. A spec that
+   * opts out has only `output()` to assert on, so it must poll for the
+   * line it expects rather than assume the binary got anywhere.
+   */
+  awaitListeners?: boolean;
+  /**
+   * `managed.snapshot_cache_path` — enables the on-disk snapshot cache
+   * (#871) without managed mode. Point two sequential apps (same
+   * `etcdPrefix`) at one path to exercise cache-restored restarts.
+   * The caller owns the file's lifecycle.
+   */
+  snapshotCachePath?: string;
+}
+
+export interface SpawnedApp {
+  /**
+   * The proxy base URL to drive. With `proxyListeners`, the first
+   * plaintext listener of the set; otherwise the single `proxy.addr`
+   * listener.
+   */
+  proxyUrl: string;
+  /**
+   * Every bound proxy listener, in configured order. One element unless
+   * `proxyListeners` asked for more.
+   */
+  proxyUrls: string[];
+  adminUrl: string;
+  adminKey: string;
+  etcdPrefix: string;
+  /**
+   * Dedicated metrics listener URL — the only Prometheus scrape surface.
+   * The port is reserved even when `prometheus: false` (nothing listens
+   * there in that case).
+   */
+  metricsUrl: string;
+  /**
+   * FILE MODE only: absolute path of the resources.yaml the gateway
+   * loads. Rewrite it and `signal("SIGHUP")` to trigger a reload.
+   */
+  resourcesPath?: string;
+  /**
+   * Combined stdout+stderr captured so far. Lets tests wait
+   * deterministically on log lines (e.g. the reload-failed WARN)
+   * instead of sleeping.
+   */
+  output(): string;
+  /**
+   * Stop reading the binary's stdout/stderr, leaving its log pipe to
+   * fill exactly as a container runtime's log shim does while kubelet
+   * rotates and compresses the container log. Everything written after
+   * this is invisible to `output()` until `releaseLogSink()`.
+   *
+   * For asserting that a stalled log consumer does not stall the
+   * gateway. Nothing else should need it.
+   */
+  holdLogSink(): void;
+  /** Resume draining after `holdLogSink()`. */
+  releaseLogSink(): void;
+  signal(signal: NodeJS.Signals): void;
+  /**
+   * Resolves when the process exits on its own — no signal is sent, no
+   * SIGKILL escalation. Rejects after `timeoutMs`. For asserting that a
+   * shutdown initiated via `signal()` actually terminates the process.
+   */
+  waitForExit(timeoutMs?: number): Promise<void>;
+  exit(): Promise<void>;
+  /**
+   * Terminate the binary WITHOUT cleaning up: the etcd prefix, the tmp
+   * config dir, and any snapshot cache file survive. For restart
+   * scenarios — spawn a successor with the same `etcdPrefix` /
+   * `snapshotCachePath`, and let the successor's `exit()` clean up.
+   */
+  stop(): Promise<void>;
+}
+
+const BIN_PATH =
+  process.env.SIBYL_GATEWAY_BIN ?? join(process.cwd(), "..", "..", "target", "debug", "sibyl-gateway");
+const READY_TIMEOUT_MS = 10_000;
+const SHUTDOWN_GRACE_MS = 3_000;
+
+/**
+ * Suite-wide `proxy.thread_per_core`, from `E2E_THREAD_PER_CORE`, so CI
+ * can run the whole suite in each serving mode. Unset leaves the binary
+ * on its platform default; a per-test `threadPerCore` still wins over
+ * both.
+ *
+ * Every site that spawns the binary has to read this — a spawn site that
+ * ignores it silently stays on one mode forever, and the leg that was
+ * supposed to cover the other one goes green without ever running it.
+ */
+export const suiteThreadPerCore: boolean | undefined =
+  process.env.E2E_THREAD_PER_CORE === undefined
+    ? undefined
+    : process.env.E2E_THREAD_PER_CORE !== "false";
+
+/**
+ * Per-test handle to a spawned `sibyl-gateway` binary. Each call writes a fresh
+ * config YAML into a tmp dir, picks three free ports (proxy, admin,
+ * metrics), picks a unique etcd prefix, and waits up to 10s for `/livez`
+ * on the proxy, `/admin/v1/health` on the admin listener, and the scrape
+ * path on the metrics listener to respond 200. `exit()` issues SIGTERM
+ * and waits up to 3s, escalating to SIGKILL.
+ *
+ * A startup that dies to a port collision (an external process bound one
+ * of the picked ports in the pick→bind window; see `ports.ts`) is retried
+ * with fresh ports rather than failing the test.
+ */
+export async function spawnApp(overrides: AppOverrides = {}): Promise<SpawnedApp> {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await spawnAppOnce(overrides);
+    } catch (err) {
+      if (attempt < MAX_ATTEMPTS && isAddrInUseStartupFailure(err)) {
+        console.warn(
+          `spawnApp: sibyl-gateway died to a port collision (attempt ${attempt}/${MAX_ATTEMPTS}), retrying with fresh ports`,
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * True when the spawn failure is `sibyl-gateway` exiting at startup because one
+ * of its listeners hit AddrInUse — the only failure class `spawnApp`
+ * retries (anything else is a real bug the test must surface).
+ */
+export function isAddrInUseStartupFailure(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  // Matches both the OS error text ("Address already in use (os error
+  // 98)") and Rust's ErrorKind rendering ("AddrInUse").
+  return msg.includes("exited early") && /addr(?:ess)?\s*(?:already\s*)?in\s*use/i.test(msg);
+}
+
+async function spawnAppOnce(overrides: AppOverrides = {}): Promise<SpawnedApp> {
+  const fileMode = overrides.resourcesFile !== undefined;
+  const etcd = new EtcdClient();
+  // FILE MODE never contacts etcd — skip the availability gate so the
+  // file source stays exercisable even without the shared etcd.
+  if (!fileMode && !(await etcd.ping())) {
+    throw new Error(
+      `etcd not reachable at ${etcdEndpoint()} ` +
+        "(set SIBYL_GATEWAY_E2E_ETCD_ENDPOINTS — which takes precedence — or SIBYL_GATEWAY_E2E_ETCD, " +
+          "or run `docker run --rm -p 2379:2379 quay.io/coreos/etcd:v3.5.15`)",
+    );
+  }
+
+  const prometheusEnabled = overrides.prometheus ?? true;
+  const adminEnabled = overrides.admin ?? false;
+  // `extra` is spread over the generated config at the top level, so an
+  // `extra.admin` would replace the generated admin block and could bind
+  // the listener while readiness still keys off `adminEnabled` and skips
+  // the admin health gate. Keep the `admin` boolean the single source of
+  // truth for the admin listener.
+  if (overrides.extra && "admin" in overrides.extra) {
+    throw new Error(
+      "spawnApp: control the admin listener with the `admin` boolean override, not `extra.admin`",
+    );
+  }
+  if (overrides.awaitListeners === false && overrides.awaitProxyListener !== undefined) {
+    throw new Error(
+      "spawnApp: awaitListeners:false already skips every readiness gate — " +
+        "drop the awaitProxyListener override, which reads as if `/livez` were " +
+        "still being waited on",
+    );
+  }
+  if (overrides.awaitProxyListener === false) {
+    // Readiness now rests entirely on the other two listeners, so both the
+    // ways of turning them off have to be refused. `extra` counts: it
+    // replaces whole top-level blocks, so an `extra.observability` can
+    // disable the metrics listener the readiness probe is waiting on while
+    // `prometheusEnabled` still reads true — spawnApp would then sit out its
+    // full readiness timeout.
+    if (!adminEnabled && !prometheusEnabled) {
+      throw new Error(
+        "spawnApp: awaitProxyListener:false needs `admin` or `prometheus` on — " +
+          "with all three off nothing is waited on, so spawnApp would return before " +
+          "the binary has started and a later non-zero exit could not surface",
+      );
+    }
+    if (overrides.extra && "observability" in overrides.extra) {
+      throw new Error(
+        "spawnApp: awaitProxyListener:false cannot be combined with " +
+          "`extra.observability` — it replaces the generated metrics block, which is " +
+          "what readiness waits on once the proxy listener is not",
+      );
+    }
+  }
+  const listenerSpecs = overrides.proxyListeners;
+  if (listenerSpecs && !listenerSpecs.some((l) => l.tls === undefined)) {
+    throw new Error(
+      "spawnApp: `proxyListeners` needs at least one plaintext entry — readiness " +
+        "and `proxyUrl` use the first one, and the harness has no TLS-trusting client",
+    );
+  }
+  const [proxyPort, adminPort, metricsPort, ...listenerPorts] = await pickFreePorts(
+    3 + (listenerSpecs?.length ?? 0),
+  );
+  const adminKey = overrides.adminKey ?? `admin-${randomUUID()}`;
+  const etcdPrefix = overrides.etcdPrefix ?? `/sibyl-gateway-e2e-${randomUUID()}`;
+
+  const dir = await mkdtemp(join(tmpdir(), "sibyl-gateway-e2e-"));
+  let resourcesPath: string | undefined;
+  if (fileMode) {
+    resourcesPath = join(dir, "resources.yaml");
+    await writeFile(resourcesPath, overrides.resourcesFile!, "utf8");
+  }
+
+  const cfg = {
+    // Exactly one resource source: the standalone file, or etcd.
+    ...(fileMode
+      ? { resources_file: resourcesPath }
+      : {
+          // Neither timeout key is set: `request_timeout_ms` is then
+          // unbounded, which is the shipped default — a suite-wide bound
+          // on the configuration range read would be a source of flakes
+          // that no case is asking for. `dial_timeout_ms` takes its own
+          // shipped default (5000 ms) here for the same reason, so the
+          // suite exercises what an operator ships with; the cases that
+          // ARE about those keys set them through `extra`.
+          etcd: {
+            endpoints: [etcdEndpoint()],
+            prefix: etcdPrefix,
+          },
+        }),
+    proxy: {
+      addr: `127.0.0.1:${proxyPort}`,
+      request_body_limit_bytes: overrides.requestBodyLimitBytes ?? 10485760,
+      ...(overrides.realIp ? { real_ip: overrides.realIp } : {}),
+      ...(overrides.requestId ? { request_id: overrides.requestId } : {}),
+      ...((overrides.threadPerCore ?? suiteThreadPerCore) !== undefined
+        ? { thread_per_core: overrides.threadPerCore ?? suiteThreadPerCore }
+        : {}),
+      ...(overrides.urlRewrites ? { url_rewrites: overrides.urlRewrites } : {}),
+      ...(listenerSpecs
+        ? {
+            listeners: listenerSpecs.map((listener, i) => ({
+              addr: `127.0.0.1:${listenerPorts[i]}`,
+              ...(listener.tls ? { tls: listener.tls } : {}),
+            })),
+          }
+        : {}),
+    },
+    admin: adminEnabled
+      ? { addr: `127.0.0.1:${adminPort}`, admin_keys: [adminKey] }
+      : { addr: `127.0.0.1:${adminPort}`, enabled: false },
+    observability: {
+      service_name: "sibyl-gateway-e2e",
+      log_level: overrides.logLevel ?? "warn",
+      access_log: false,
+      metrics: {
+        prometheus: {
+          enabled: prometheusEnabled,
+          path: overrides.prometheusPath ?? "/metrics",
+          addr: `127.0.0.1:${metricsPort}`,
+        },
+        ...(overrides.clientTypeRules
+          ? { client_type_rules: overrides.clientTypeRules }
+          : {}),
+      },
+    },
+    cache: { backend: "memory" },
+    // The gateway ships a 30s drain window so a load balancer can
+    // withdraw a terminating replica before its listener closes. No
+    // balancer fronts a spawned test binary, and paying that window on
+    // every teardown would add 30s per app — the harness would SIGKILL
+    // at SHUTDOWN_GRACE_MS instead, losing the clean-exit path these
+    // specs rely on. Drain immediately here; the drain spec sets its own
+    // window through `extra`.
+    shutdown: { min_drain_secs: 0 },
+    ...(overrides.snapshotCachePath !== undefined
+      ? {
+          managed: {
+            snapshot_cache_enabled: overrides.snapshotCachePath !== "",
+            snapshot_cache_path: overrides.snapshotCachePath,
+          },
+        }
+      : {}),
+    ...(overrides.extra ?? {}),
+  };
+
+  const cfgPath = join(dir, "config.yaml");
+  await writeFile(cfgPath, yamlStringify(cfg), "utf8");
+
+  // Strip SIBYL_GATEWAY_* env vars so they don't leak into the binary's
+  // config loader (which treats SIBYL_GATEWAY_<KEY> as config overrides).
+  // Legacy AISIX_* vars are stripped too: the loader aliases them with a
+  // boot warning, and a spec must not inherit the runner's own env either
+  // way.
+  const childEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !k.startsWith("SIBYL_GATEWAY_") && !k.startsWith("AISIX_")) {
+      childEnv[k] = v;
+    }
+  }
+  childEnv.RUST_LOG = overrides.logLevel ?? process.env.RUST_LOG ?? "warn";
+  childEnv.HTTP_PROXY = "";
+  childEnv.HTTPS_PROXY = "";
+  childEnv.ALL_PROXY = "";
+  childEnv.http_proxy = "";
+  childEnv.https_proxy = "";
+  childEnv.all_proxy = "";
+  childEnv.NO_PROXY = "127.0.0.1,localhost";
+  childEnv.no_proxy = "127.0.0.1,localhost";
+
+  // Non-config secrets the DP reads straight from its environment (e.g.
+  // SLS AccessKeys). Applied last so they survive the SIBYL_GATEWAY_* strip above.
+  for (const [k, v] of Object.entries(overrides.extraEnv ?? {})) {
+    childEnv[k] = v;
+  }
+  if (overrides.configViaEnv) childEnv.SIBYL_GATEWAY_CONFIG = cfgPath;
+
+  const args = overrides.configViaEnv ? [] : ["--config", cfgPath];
+  const child = spawn(BIN_PATH, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: childEnv,
+  });
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+
+  let stderrBuf = "";
+  const drain = (c: Buffer) => {
+    stderrBuf += c.toString("utf8");
+  };
+  child.stderr?.on("data", drain);
+  child.stdout?.on("data", drain);
+  let exitErr: string | undefined;
+  // Reject the readiness wait the moment the binary exits non-zero, so
+  // an intentional boot failure (e.g. a malformed resources file)
+  // surfaces immediately instead of after the full readiness timeout.
+  const exitedEarly = new Promise<never>((_, reject) => {
+    child.once("exit", (code, signal) => {
+      if (code !== 0 && code !== null) {
+        exitErr = `sibyl-gateway exited early with code=${code} signal=${signal}`;
+        reject(new Error(exitErr));
+      }
+    });
+  });
+
+  const proxyUrls = listenerSpecs
+    ? listenerSpecs.map(
+        (listener, i) =>
+          `${listener.tls ? "https" : "http"}://127.0.0.1:${listenerPorts[i]}`,
+      )
+    : [`http://127.0.0.1:${proxyPort}`];
+  // `proxy.addr` is unbound once a listener set is configured, so every
+  // gate and every client the harness hands back has to speak to a
+  // listener that exists.
+  const proxyUrl = proxyUrls.find((url) => url.startsWith("http://"))!;
+  const adminUrl = `http://127.0.0.1:${adminPort}`;
+  const metricsUrl = `http://127.0.0.1:${metricsPort}`;
+
+  try {
+    // A spec that opted out of every gate owns its own waiting: nothing
+    // is listening to probe, so `output()` is the only signal there is.
+    if (overrides.awaitListeners === false) {
+      // `exitedEarly` is armed either way, and nothing is racing it here.
+      // Left alone, an early non-zero exit would surface as a bare
+      // unhandled rejection under vitest instead of through `waitForExit`
+      // and `output()`, which is where such a spec looks.
+      exitedEarly.catch(() => {});
+    } else {
+      await Promise.race([
+        Promise.all([
+          // The proxy listener binds only once a configuration has been
+          // applied, so a spec that holds configuration back opts out here.
+          ...((overrides.awaitProxyListener ?? true)
+            ? [waitForReady(`${proxyUrl}/livez`, READY_TIMEOUT_MS)]
+            : []),
+          // The admin health endpoint only exists when the admin listener is
+          // bound; with `admin: false` there is no admin surface, so gate on
+          // the proxy `/livez` and the metrics listener alone. (If both
+          // `admin` and `prometheus` are off, readiness reduces to the proxy
+          // `/livez` — liveness only; a case that needs config-propagation
+          // readiness should keep prometheus on, as the default does.)
+          ...(adminEnabled
+            ? [waitForReady(`${adminUrl}/admin/v1/health`, READY_TIMEOUT_MS, adminKey)]
+            : []),
+          // Gate on the dedicated metrics listener too, so scrapes in the test
+          // never race the listener coming up. Skipped when prometheus is
+          // disabled — nothing binds the metrics port then.
+          ...(prometheusEnabled
+            ? [
+                waitForReady(
+                  `${metricsUrl}${overrides.prometheusPath ?? "/metrics"}`,
+                  READY_TIMEOUT_MS,
+                ),
+              ]
+            : []),
+        ]),
+        exitedEarly,
+      ]);
+    }
+  } catch (err) {
+    const detail = exitErr ?? "still running";
+    await terminate(child);
+    // `exit` can precede the final pipe data. Assertions need the full
+    // diagnostic, including an error between startup logs and a backtrace.
+    await closed;
+    await cleanup(fileMode ? undefined : etcd, etcdPrefix, dir);
+    throw new Error(
+      `${(err as Error).message}\n  binary state: ${detail}\n  stderr:\n${stderrBuf}`,
+    );
+  }
+
+  return {
+    proxyUrl,
+    proxyUrls,
+    adminUrl,
+    adminKey,
+    etcdPrefix,
+    metricsUrl,
+    resourcesPath,
+    output() {
+      return stderrBuf;
+    },
+    holdLogSink() {
+      // `pause()` alone is not enough: a `data` listener puts the stream
+      // in flowing mode and keeps reading the fd.
+      child.stderr?.off("data", drain);
+      child.stdout?.off("data", drain);
+      child.stderr?.pause();
+      child.stdout?.pause();
+    },
+    releaseLogSink() {
+      child.stderr?.on("data", drain);
+      child.stdout?.on("data", drain);
+      child.stderr?.resume();
+      child.stdout?.resume();
+    },
+    signal(signal: NodeJS.Signals) {
+      if (child.exitCode === null) child.kill(signal);
+    },
+    waitForExit(timeoutMs = 10_000) {
+      // A signal-terminated child has exitCode === null and signalCode
+      // set — both mean "already exited", and the exit event will not
+      // fire again for a late listener.
+      if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        const onExit = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          child.off("exit", onExit);
+          reject(new Error(`sibyl-gateway did not exit within ${timeoutMs}ms`));
+        }, timeoutMs);
+        child.once("exit", onExit);
+      });
+    },
+    async exit() {
+      await terminate(child);
+      await cleanup(fileMode ? undefined : etcd, etcdPrefix, dir);
+    },
+    async stop() {
+      await terminate(child);
+    },
+  };
+}
+
+async function waitForReady(url: string, timeoutMs: number, bearer?: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown;
+  let lastStatus: number | undefined;
+  let attempts = 0;
+  while (Date.now() < deadline) {
+    attempts++;
+    try {
+      const headers: Record<string, string> = {};
+      if (bearer) headers.authorization = `Bearer ${bearer}`;
+      const res = await harnessRequest(url, { method: "GET", headers });
+      lastStatus = res.statusCode;
+      if (res.statusCode === 200) {
+        await res.body.dump();
+        return;
+      }
+      await res.body.dump();
+    } catch (err) {
+      lastErr = err;
+    }
+    await sleep(100);
+  }
+  throw new Error(
+    `timed out waiting for ${url} after ${attempts} attempts (lastStatus=${lastStatus ?? "n/a"}): ${lastErr ?? "no response"}`,
+  );
+}
+
+async function terminate(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  const exited = await Promise.race([
+    new Promise<boolean>((r) => child.once("exit", () => r(true))),
+    sleep(SHUTDOWN_GRACE_MS).then(() => false),
+  ]);
+  if (!exited && child.exitCode === null) {
+    child.kill("SIGKILL");
+    await new Promise<void>((r) => child.once("exit", () => r()));
+  }
+}
+
+async function cleanup(
+  etcd: EtcdClient | undefined,
+  prefix: string,
+  dir: string,
+): Promise<void> {
+  // Best-effort — never throw from cleanup. `etcd` is undefined in file
+  // mode, where no prefix was ever written.
+  await Promise.allSettled([
+    ...(etcd ? [etcd.deletePrefix(prefix)] : []),
+    rm(dir, { recursive: true, force: true }),
+  ]);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}

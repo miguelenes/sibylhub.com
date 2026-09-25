@@ -1,0 +1,22 @@
+[package]
+name = "sibyl-gateway-ratelimit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "sibyl-gateway: fixed-window rate limiter (commit/read-only modes) + semaphore-based concurrency"
+
+[dependencies]
+sibyl-gateway-core = { path = "../sibyl-gateway-core" }
+sibyl-gateway-redis = { path = "../sibyl-gateway-redis" }
+sibyl-gateway-obs = { path = "../sibyl-gateway-obs" }
+tokio.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+redis.workspace = true
+uuid.workspace = true

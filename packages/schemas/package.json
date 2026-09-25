@@ -22,6 +22,11 @@
       "types": "./dist/catalog.d.ts",
       "import": "./dist/catalog.js"
     },
+    "./candidates": {
+      "types": "./dist/candidates.d.ts",
+      "import": "./dist/candidates.js"
+    },
+    "./fixtures/*": "./fixtures/*",
     "./schema/*": "./json-schema/*"
   },
   "files": [
@@ -31,6 +36,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "verify:package": "pnpm build && node scripts/verify-packaged-consumer.mjs",
     "lint": "eslint src scripts --max-warnings=0",
     "format": "prettier --check src scripts",
     "format:write": "prettier --write src scripts",
@@ -40,15 +46,15 @@
     "clean": "rm -rf dist json-schema fixtures"
   },
   "dependencies": {
-    "zod": "4.1.12"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@sibylhub/typescript-config": "workspace:*",
-    "@typescript-eslint/parser": "8.46.1",
-    "@types/node": "24.8.1",
-    "@vitest/coverage-v8": "4.1.11",
-    "eslint": "9.37.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "@typescript-eslint/parser": "8.70.0",
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "eslint": "10.11.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
   }
 }

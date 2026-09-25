@@ -59,18 +59,18 @@ Alternative considered: separate repositories would preserve runtime isolation b
 
 Direct dependencies will be written with exact versions in implementation manifests, and each ecosystem lockfile will be committed. The compatibility baseline selected from the package metadata checked during design is:
 
-| Area | Baseline | Rationale |
-| --- | --- | --- |
-| Node runtime | Node 20 LTS, with the repository minimum recorded explicitly | Satisfies Docusaurus v3 and the selected Astro/Cloudflare toolchain without requiring separate Node versions |
-| Package manager | pnpm 9.15.9 | Latest available pnpm 9 patch observed during design and compatible with the requested pnpm 9 line |
-| Orchestrator | turbo 2.10.13 | Current stable Turborepo 2 line observed during design; uses the `tasks` schema |
-| Root tooling | prettier 3.9.6, TypeScript 5.9.3 | Stable root formatting/typecheck baseline with broad ecosystem compatibility |
-| Web | Astro 5.18.2, `@astrojs/react` 4.3.1, `@astrojs/cloudflare` 12.6.13, React/React DOM 19.2.0 | The Cloudflare adapter version peers with Astro 5 and the React integration supports React 19 |
-| Web styling | Tailwind CSS 4.3.3, `@tailwindcss/vite` 4.3.3, HeroUI React/Styles 3.2.5 | Tailwind v4 and HeroUI v3 are the selected UI contracts |
-| Cloudflare tooling | Wrangler 4.59.2, aligned with the selected Astro Cloudflare adapter | Keeps local Worker preview and deployment tooling on the adapter’s compatible line |
-| Documentation | Docusaurus core/preset classic 3.10.2 and `@mdx-js/react` 3.1.1 | Docusaurus v3 TypeScript/static build baseline with React 19 peer compatibility |
-| PHP | PHP 8.3+, Laravel 12.69.2, Filament 5.8.1, Laravel Boost 2.9.0 | Chooses Laravel 12 within the requested 11/12 range and matches the current Filament/Boost compatibility lines |
-| Rust | Axum 0.7 line, Tokio 1.40 line, Serde 1.x, SQLx 0.8 line, Tower HTTP 0.6 line, Clap 4.x, Reqwest 0.12 line, Indicatif 0.17 line | Preserves the requested API/CLI baseline while avoiding an unreviewed major upgrade during bootstrap |
+| Area               | Baseline                                                                                                                        | Rationale                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Node runtime       | Node 20 LTS, with the repository minimum recorded explicitly                                                                    | Satisfies Docusaurus v3 and the selected Astro/Cloudflare toolchain without requiring separate Node versions   |
+| Package manager    | pnpm 9.15.9                                                                                                                     | Latest available pnpm 9 patch observed during design and compatible with the requested pnpm 9 line             |
+| Orchestrator       | turbo 2.10.13                                                                                                                   | Current stable Turborepo 2 line observed during design; uses the `tasks` schema                                |
+| Root tooling       | prettier 3.9.6, TypeScript 5.9.3                                                                                                | Stable root formatting/typecheck baseline with broad ecosystem compatibility                                   |
+| Web                | Astro 5.18.2, `@astrojs/react` 4.3.1, `@astrojs/cloudflare` 12.6.13, React/React DOM 19.2.0                                     | The Cloudflare adapter version peers with Astro 5 and the React integration supports React 19                  |
+| Web styling        | Tailwind CSS 4.3.3, `@tailwindcss/vite` 4.3.3, HeroUI React/Styles 3.2.5                                                        | Tailwind v4 and HeroUI v3 are the selected UI contracts                                                        |
+| Cloudflare tooling | Wrangler 4.59.2, aligned with the selected Astro Cloudflare adapter                                                             | Keeps local Worker preview and deployment tooling on the adapter’s compatible line                             |
+| Documentation      | Docusaurus core/preset classic 3.10.2 and `@mdx-js/react` 3.1.1                                                                 | Docusaurus v3 TypeScript/static build baseline with React 19 peer compatibility                                |
+| PHP                | PHP 8.3+, Laravel 12.69.2, Filament 5.8.1, Laravel Boost 2.9.0                                                                  | Chooses Laravel 12 within the requested 11/12 range and matches the current Filament/Boost compatibility lines |
+| Rust               | Axum 0.7 line, Tokio 1.40 line, Serde 1.x, SQLx 0.8 line, Tower HTTP 0.6 line, Clap 4.x, Reqwest 0.12 line, Indicatif 0.17 line | Preserves the requested API/CLI baseline while avoiding an unreviewed major upgrade during bootstrap           |
 
 The Rust and PHP direct version lines will be resolved to exact compatible patch versions during implementation, recorded in `Cargo.lock` and `composer.lock`, and checked with the selected toolchain. No manifest will use a `latest` tag. If the selected exact versions cannot satisfy the stated runtime constraints, implementation must stop at that dependency gate rather than silently changing major versions.
 

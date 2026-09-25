@@ -1,0 +1,281 @@
+# SibylHub Gateway — managed-mode bootstrap configuration for the upstream AISIX Cloud compatibility surface.
+#
+# SibylHub operates no control plane. This file exists so a gateway joining an
+# external, pre-existing AISIX Cloud environment keeps booting; managed mode is
+# opt-in (`managed.enabled: true`) and dormant everywhere else.
+#
+# Baked into the official Docker image as `/etc/sibyl-gateway/config.managed.yaml`.
+# Select it by setting `SIBYL_GATEWAY_CONFIG_PATH` to that path.
+# Only the bare minimum is set here:
+#
+#   - `managed.enabled: true`           always on in this bootstrap configuration
+#   - `etcd.endpoints: [placeholder]`   overridden at boot from managed
+#                                       CP endpoint config
+#   - `admin.admin_keys: [placeholder]` validation requires the slot,
+#                                       but the admin listener is never
+#                                       bound in managed mode
+#
+# Operators inject these env vars at `docker run` time:
+#
+#   SIBYL_GATEWAY_MANAGED__CP_BASE_URL=https://api.us.sibyl-gateway.cloud
+#   SIBYL_GATEWAY_MANAGED__CP_ETCD_ENDPOINT=etcd.us.sibyl-gateway.cloud:7943
+#   SIBYL_GATEWAY_MANAGED__CP_CERT_PEM=...
+#   SIBYL_GATEWAY_MANAGED__CP_KEY_PEM=...
+#   SIBYL_GATEWAY_MANAGED__CP_CA_PEM=...
+#
+# `CP_BASE_URL` may omit the scheme — a bare `host:port` is read as
+# `https://host:port`, which is what a managed control plane serves.
+# Anything else fails the boot rather than being carried into the
+# heartbeat, telemetry and budget-check calls: a scheme, when written
+# out, must be exactly `http://` or `https://` in lower case, and the
+# rest must be a real host — an unreplaced `<placeholder>` is rejected
+# too. The scheme governs those three REST calls only; the etcd channel
+# is mTLS whatever is set here, so an `http://` base does not give you a
+# plaintext gateway — it gives you REST calls that cannot reach a TLS
+# control plane. `CP_ETCD_ENDPOINT` carries the opposite convention: it
+# is a bare `host:port` by contract, because the gateway attaches
+# `https://` to it itself. A leading `http://` or `https://` written
+# there is stripped rather than doubled up; anything else that is not a
+# bare `host[:port]` — a path, a query, userinfo, a port that is not a
+# number — fails the boot naming the variable.
+#
+# Plus optionally `SIBYL_GATEWAY_PROXY__ADDR`, `SIBYL_GATEWAY_OBSERVABILITY__LOG_LEVEL`,
+# `SIBYL_GATEWAY_CACHE__BACKEND`, etc. — every config field is reachable via
+# `SIBYL_GATEWAY_<UPPER>__<UPPER>` (see crates/sibyl-gateway-core/src/config.rs).
+#
+# For a multi-replica deployment, enable cluster-level rate limiting so
+# the cluster enforces one global window instead of N× per replica
+# (api7/AISIX-Cloud#798):
+#   SIBYL_GATEWAY_RATELIMIT__BACKEND=redis
+#   SIBYL_GATEWAY_RATELIMIT__REDIS__URL=redis://<host>:6379
+#   SIBYL_GATEWAY_RATELIMIT__REDIS__TIMEOUT_SECS=5   # optional; this is the default
+#
+# `timeout_secs` bounds one Redis round trip, and the connection the
+# gateway makes at startup (in `cluster`/`sentinel` mode the startup
+# connection gets this budget once per configured endpoint the discovery
+# walks, plus one). The limiter fails open to per-replica counting when
+# Redis errors, but an unreachable Redis produces no error at all until
+# something times out, so without the bound a rate-limited request waits
+# on TCP retransmission for minutes. Lower it for a Redis on the same
+# node; it must be >= 1. After a failure the limiter short-circuits for
+# 30 seconds and then lets one request probe, so an outage costs this
+# budget once per 30 seconds rather than once per request.
+#
+# A Redis that is unreachable when the gateway STARTS does not stop it:
+# the listeners bind, the limiter counts per replica (so cluster-wide
+# limits are not enforced) and one WARN names the backend. The shared
+# backend is attached in the background as soon as Redis answers — which
+# is the node-reboot case, where Redis comes up after the gateway. The
+# gateway never silently falls back to the `memory` backend.
+#
+# A Redis that ANSWERS and refuses the credential degrades the same way
+# rather than ending the boot, but the WARN says the server REFUSED
+# instead of blaming a timeout that never happened.
+# It is retried too: the credential may be corrected on the server, and
+# the shared backend is then attached without restarting the gateway.
+# The credential may be embedded in the URL or given separately as
+# `SIBYL_GATEWAY_RATELIMIT__REDIS__USERNAME` / `__PASSWORD` / `__DATABASE`,
+# which override whatever the URL carries.
+#
+# Subsequent boots re-use the mTLS bundle written under
+# `managed.mtls_dir`.
+
+etcd:
+  # Placeholder — overwritten at boot before opening the gRPC channel.
+  endpoints:
+    - "https://placeholder-overridden-at-register:2379"
+  prefix: "/sibyl-gateway"
+  # `0` means unbounded on either key — the same reading a model's
+  # `timeout: 0` gets. (A model's `stream_timeout: 0` instead falls back
+  # to the next level of a resolution chain these flat startup keys do
+  # not have.)
+  # `dial_timeout_ms` bounds a dial — the TCP connect, the TLS handshake
+  # above it and the authentication exchange when `user` is set — and an
+  # expired dial is retried, not fatal. The whole dial gets it once per
+  # configured endpoint (`dial_timeout_ms x max(1, endpoints)`), as
+  # headroom for a cluster with unreachable members. The window in which
+  # no listener is bound is `dial_timeout_ms x endpoints x 2`, because
+  # boot dials two providers one after the other. It defaults to 5000,
+  # because boot awaits the dial before binding any listener: a control
+  # plane that accepts the connection and then answers nothing would
+  # otherwise hold the proxy and metrics ports closed indefinitely, with
+  # the snapshot cache unread behind it. Set `0` for the old unbounded
+  # behaviour.
+  # `request_timeout_ms` is unset by default, and unset means unbounded.
+  # It bounds a single request/response call (the configuration range
+  # read, creating the watch, the admin reads) but never the established
+  # watch stream. A `request_timeout_ms` the range read cannot finish
+  # inside makes the gateway retry it forever without ever serving
+  # traffic, so leave it unset unless a slow etcd must fail fast.
+  # dial_timeout_ms: 5000   # this is the default; 0 = unbounded
+  # request_timeout_ms: 5000
+
+proxy:
+  addr: "0.0.0.0:3000"
+  # 0 = no request-body cap (the default); set a value to bound
+  # per-request memory.
+  # request_body_limit_bytes: 0
+  # TLS on the single listener `addr` describes.
+  # tls:
+  #   cert_file: "/etc/sibyl-gateway/tls/proxy.crt"
+  #   key_file:  "/etc/sibyl-gateway/tls/proxy.key"
+  # Several proxy listeners, each with its own optional TLS — HTTPS and
+  # plaintext HTTP served at the same time. Set, this is the COMPLETE set
+  # of proxy listeners: only the addresses listed here are bound, `addr`
+  # above is ignored (it stays required, and the gateway logs one line at
+  # startup saying so), and `tls` above must be absent — a certificate that would
+  # apply to no listener is a configuration error. A managed deployment
+  # reaches this through the environment rather than by editing this file,
+  # as one JSON array:
+  # SIBYL_GATEWAY_PROXY__LISTENERS='[{"addr":"0.0.0.0:3443","tls":{"cert_file":"/etc/sibyl-gateway/tls/proxy.crt","key_file":"/etc/sibyl-gateway/tls/proxy.key"}},{"addr":"0.0.0.0:3000"}]'
+  # listeners:
+  #   - addr: "0.0.0.0:3443"
+  #     tls:
+  #       cert_file: "/etc/sibyl-gateway/tls/proxy.crt"
+  #       key_file:  "/etc/sibyl-gateway/tls/proxy.key"
+  #   - addr: "0.0.0.0:3000"
+  # Serving topology; on for Linux by default. A managed deployment
+  # reaches these through the environment rather than by editing this
+  # file: SIBYL_GATEWAY_PROXY__THREAD_PER_CORE, SIBYL_GATEWAY_PROXY__WORKERS.
+  # thread_per_core: true
+  # workers: 4
+  # Headers a caller may hand the gateway its own request id in; that id
+  # then becomes the x-sibylhub-request-id response header, the request_id on
+  # every attempt's usage event, and what the upstream sees. Defaults to
+  # ["x-sibylhub-request-id"]. Add x-request-id only if the gateway is NOT
+  # behind a proxy that stamps it. Comma-separated from the environment:
+  # SIBYL_GATEWAY_PROXY__REQUEST_ID__ACCEPT_HEADERS=x-sibylhub-request-id,x-request-id
+  # request_id:
+  #   accept_headers: ["x-sibylhub-request-id"]
+  # Entry-level URL rewriting (first matching rule wins; `match` runs on
+  # the raw, percent-encoded path; `rewrite` replaces the matched portion,
+  # $1 = capture group; the query string is preserved). Lets clients keep
+  # legacy URL shapes, e.g. per-server MCP paths served on the
+  # /mcp/{server} endpoint. When configuring through env vars only, set
+  # one JSON array: SIBYL_GATEWAY_PROXY__URL_REWRITES='[{"match":"...","rewrite":"..."}]'
+  # Runs before ALL routing, including host-matched passthrough routes.
+  # Optional hosts restrict a rule to those inbound hosts; omit for all hosts.
+  # Host matching ignores case/port; *.example.com matches one extra label.
+  # url_rewrites:
+  #   - name: per-server-mcp-compat
+  #     hosts: ["gateway.example.com"]
+  #     match: "^/mcp-servers/([^/]+)/mcp$"
+  #     rewrite: "/mcp/$1"
+
+admin:
+  # Bind to an unbindable port so even if managed mode somehow
+  # toggled off, the admin surface wouldn't accidentally come up
+  # without an operator-supplied key.
+  addr: "127.0.0.1:0"
+  admin_keys:
+    - "managed-mode-admin-disabled"
+
+observability:
+  service_name: "sibyl-gateway"
+  log_level: "info"
+  access_log: true
+  metrics:
+    # Complete label lists per metric. Omitted metrics retain their defaults.
+    # Restart after changing labels. [] removes all optional business labels;
+    # gauges retain required identity labels. The variable reference is `crates/sibyl-gateway-obs/src/metric_labels.rs`:
+    # Env: SIBYL_GATEWAY_OBSERVABILITY__METRICS__LABELS='{"sibyl_gateway_request_ttft_seconds":["provider_key_name","model"]}'
+    # labels:
+    #   sibyl_gateway_request_ttft_seconds:
+    #     - env_id
+    #     - endpoint
+    #     - model
+    #     - provider
+    #     - status_class
+    #     - streaming
+    #     - provider_key_name
+    labels: {}
+    prometheus:
+      enabled: true
+      path: "/metrics"
+      # Dedicated metrics listener — the only Prometheus scrape surface,
+      # the same in every deployment mode. Expose this port in your
+      # deployment and point Prometheus at it. Override with
+      # SIBYL_GATEWAY_OBSERVABILITY__METRICS__PROMETHEUS__ADDR.
+      addr: "0.0.0.0:9090"
+    # Optional User-Agent -> client_type mapping rules for the
+    # sibyl_gateway_llm_tokens_by_client_total metric (first match wins, tried
+    # before the built-in allowlist; regex, case-insensitive). See
+    # config.example.yaml for the full annotation.
+    # client_type_rules:
+    #   - pattern: "^py-billing-batcher/"
+    #     client: billing-batcher
+    # Optional per-metric histogram bucket edges, in seconds; each metric
+    # keeps its own default when unset. See config.example.yaml for the
+    # full annotation and the cardinality/contract caveats. Override with
+    # a comma-separated list, e.g.
+    # SIBYL_GATEWAY_OBSERVABILITY__METRICS__BUCKETS__REQUEST_TTFT=0.1,0.5,1,5,30,300
+    # buckets:
+    #   request_ttft: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300]
+
+managed:
+  enabled: true
+  # CP URL, etcd endpoint, and cert bundle come from env vars — never
+  # bake secrets into the image.
+  mtls_dir: "/var/lib/sibyl-gateway/mtls"
+  dp_id_file: "/var/lib/sibyl-gateway/dp_id"
+  # Optional recovery across restarts while the configuration store is
+  # unavailable. Each instance needs its own writable cache location.
+  # The cache contains unencrypted credentials; restrict directory access.
+  snapshot_cache_enabled: false
+  snapshot_cache_path: "/var/lib/sibyl-gateway/config_cache.json"
+
+  # Heartbeat interval, in seconds. The DP POSTs a heartbeat to
+  # dp-manager every interval; the CP marks the DP "connected" on its
+  # first heartbeat. Clamped to [5, 300]. Default 15s; lower it (e.g. 5s)
+  # in dev/e2e so connect detection isn't bound by the interval.
+  heartbeat_interval_secs: 15
+
+cache:
+  backend: "memory"
+
+# Connection-layer settings for outbound calls to LLM providers. Shown
+# with their defaults; uncomment to override. `pool_idle_timeout_secs`
+# is the one to lower when a load balancer, NAT gateway, or service mesh
+# between this DP and the provider closes idle connections sooner than
+# the gateway expires them — the symptom is intermittent transport
+# errors against an otherwise healthy upstream.
+upstream:
+  # timeout_ms: 6000000
+  # stream_timeout_ms: 0
+  # connect_timeout_ms: 5000
+  # tcp_keepalive_secs: 60
+  # tcp_keepalive_interval_secs: 30
+  # tcp_keepalive_retries: 5
+  pool_idle_timeout_secs: 30
+  # pool_max_idle_per_host: 32
+  # Trust settings for every upstream TLS handshake — model endpoints,
+  # guardrail services, MCP / A2A upstreams, OIDC discovery, Realtime,
+  # Bedrock, log-export object stores. `ca_file` is additive to the
+  # platform trust store, so trusting a private CA leaves the public
+  # providers reachable. See config.example.yaml for the full block.
+  # tls:
+  #   ca_file: "/etc/sibyl-gateway/tls/private-ca.pem"
+  #   # client_cert_file / client_key_file for mutual TLS
+  #   # verify: true   # false accepts ANY certificate — test use only
+
+# Connection-layer settings for the inbound side. `idle_timeout_secs: 0`
+# (the default) never closes an idle client connection, leaving that to
+# the peer — set it only when a node in front pools connections for a
+# known, shorter time, and keep it above that value.
+downstream:
+  idle_timeout_secs: 0
+  # sse_keepalive_interval_secs: 15
+
+# Between SIGTERM and exit the gateway keeps accepting for at least
+# `min_drain_secs` while /readyz already reports 503, so the load balancer
+# in front has time to withdraw it, then waits for in-flight requests to
+# finish before closing the listener. Raise it above the detection latency
+# of your balancer's health check. In-flight drain itself is unbounded, so
+# terminationGracePeriodSeconds must cover two requests back to back: a
+# streamed response commits its head at the first token, so a stream
+# already running at SIGTERM never gets the `Connection: close` that
+# retires its connection, and the client reuses that connection once more
+# before the successor's head — generated during the drain — ends the
+# chain. See the sibyl-gateway Helm chart's "Termination and draining" section.
+shutdown:
+  min_drain_secs: 30
