@@ -25,10 +25,10 @@
     "doctor": "npx react-doctor@latest"
   },
   "devDependencies": {
-    "prettier": "3.9.6",
-    "prettier-plugin-astro": "1.0.0",
+    "prettier": "3.9.8",
+    "prettier-plugin-astro": "1.0.1",
     "react-doctor": "^0.9.14",
-    "turbo": "2.10.13",
-    "typescript": "5.9.3"
+    "turbo": "2.11.2",
+    "typescript": "7.0.2"
   }
 }
