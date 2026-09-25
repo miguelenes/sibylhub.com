@@ -56,7 +56,7 @@ const UNKNOWN_PLAINTEXT = "sk-server-header-e2e-unregistered";
 // that swaps in e.g. `CARGO_PKG_NAME` (yielding `SibylHub-Gateway/sibyl-gateway-proxy`)
 // would slip past a looser `.+` pattern. Tightening to semver locks the
 // documented contract.
-const SERVER_HEADER_PATTERN = /^SibylHub Gateway\/\d+\.\d+\.\d+([-+][\w.-]+)?$/;
+const SERVER_HEADER_PATTERN = /^SibylHub-Gateway\/\d+\.\d+\.\d+([-+][\w.-]+)?$/;
 
 describe("data plane identifies itself via Server header on every response", () => {
   let app: SpawnedApp | undefined;
