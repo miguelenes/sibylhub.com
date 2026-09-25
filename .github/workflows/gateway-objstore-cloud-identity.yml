@@ -62,7 +62,7 @@ jobs:
       AWS_ROLE_ARN: ${{ secrets.SIBYL_GATEWAY_E2E_OIDC_AWS_ROLE_ARN }}
       AWS_REGION_CFG: ${{ secrets.SIBYL_GATEWAY_E2E_OBJSTORE_S3_REGION }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./apps/gateway/.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@v2
