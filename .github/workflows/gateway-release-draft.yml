@@ -1,14 +1,13 @@
 name: release-draft
 
-# Create a draft GitHub Release whenever a release tag (vX.Y.Z) is pushed —
-# the skeleton a maintainer polishes into curated notes before publishing
-# (see RELEASING.md). Draft releases do not notify watchers, so nothing goes
-# out until a human publishes.
+# Create a draft GitHub Release whenever a Gateway release tag (vX.Y.Z) is
+# pushed — the skeleton a maintainer polishes into curated notes before
+# publishing (see apps/gateway/RELEASING.md). Draft releases do not notify
+# watchers, so nothing goes out until a human publishes.
 #
 # The draft body leads with a fixed "Get started + Download" header
-# (.github/release-notes-header.md, version-stamped from the tag), then a
-# commented curated-notes scaffold (themed-section skeleton the maintainer
-# fills in), then GitHub's auto-generated "What's Changed" list.
+# (apps/gateway/.github/release-notes-header.md, version-stamped from the
+# tag), then GitHub's auto-generated "What's Changed" list.
 #
 # No-op if a release for the tag already exists (e.g. created manually).
 
@@ -61,7 +60,7 @@ jobs:
           # Version-stamped docs + download header every release should lead with.
           # '#' delimiter for __ROLLING_TAGS__ so the URL's slashes don't clash.
           sed -e "s/__VERSION__/$VERSION/g" -e "s#__ROLLING_TAGS__#${ROLLING}#" \
-            .github/release-notes-header.md > release-body.md
+            apps/gateway/.github/release-notes-header.md > release-body.md
 
           # GitHub's auto-generated "What's Changed" skeleton, appended below the
           # header. Fall back to a bare heading so a transient API failure still

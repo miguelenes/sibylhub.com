@@ -53,6 +53,12 @@ on:
     types: [labeled, synchronize, reopened]
     branches: [main]
 
+defaults:
+  run:
+    # The Gateway is an independent Cargo workspace under apps/gateway; every
+    # shell step runs from there unless it overrides the working directory.
+    working-directory: apps/gateway
+
 permissions:
   contents: read
 
@@ -88,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: ./.github/actions/setup-protoc
+      - uses: ./apps/gateway/.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@v2
       - name: Report which providers are configured
         run: |

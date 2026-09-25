@@ -74,7 +74,7 @@ export async function setup(): Promise<void> {
     `etcd not reachable at ${dead.join(", ")} (of ${endpoints.length} in use). ` +
       "Every case file that landed on one of these would SKIP silently and the run " +
       "would still pass, so it fails here instead. Check the etcd services in " +
-      ".github/workflows/ci.yml against SIBYL_GATEWAY_E2E_ETCD_ENDPOINTS — the two lists " +
+      ".github/workflows/gateway-ci.yml against SIBYL_GATEWAY_E2E_ETCD_ENDPOINTS — the two lists " +
       "must match entry for entry.",
   );
 }

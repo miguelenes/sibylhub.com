@@ -36,16 +36,22 @@ on:
     tags: ["v*.*.*"]
   pull_request:
     branches: [main]
+    # Scoped to the Gateway application and the Dockerfile's COPY inputs
+    # (Cargo manifests, crates, schemas, PGO training assets, managed
+    # config, entrypoint) plus this workflow file at the monorepo root.
     paths:
-      - Dockerfile
-      - .dockerignore
-      - .github/workflows/docker-image.yml
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - "crates/**"
-      - "schemas/**"
-      - "bench/pgo-training/**"
+      - apps/gateway/Dockerfile
+      - apps/gateway/.dockerignore
+      - .github/workflows/gateway-docker-image.yml
+      - apps/gateway/Cargo.toml
+      - apps/gateway/Cargo.lock
+      - apps/gateway/rust-toolchain.toml
+      - apps/gateway/rustfmt.toml
+      - apps/gateway/config.managed.yaml
+      - "apps/gateway/crates/**"
+      - "apps/gateway/schemas/**"
+      - "apps/gateway/bench/pgo-training/**"
+      - "apps/gateway/docker/**"
   workflow_dispatch:
     inputs:
       tag:
@@ -55,6 +61,13 @@ on:
         description: "Run the full PGO build (pre-flight the release build path)"
         type: boolean
         default: false
+
+defaults:
+  run:
+    # The Gateway is an independent Cargo workspace under apps/gateway; every
+    # shell step runs from there unless it overrides the working directory.
+    # Action inputs (the Docker context below) stay workspace-relative.
+    working-directory: apps/gateway
 
 env:
   REGISTRY: ghcr.io
@@ -101,7 +114,8 @@ jobs:
       # because PGO cost ~20 min on every one of the ~40 main pushes per
       # release cycle and bought nothing those images are used for.
       #
-      # Two consequences are load-bearing and documented in RELEASING.md:
+      # Two consequences are load-bearing and documented in
+      # apps/gateway/RELEASING.md:
       #   - the QA'd `-rc.N` image is NOT PGO'd while the released image is.
       #     PGO changes code layout, never semantics (the workspace has no
       #     `unsafe`), so the QA result still describes the shipped build —
@@ -146,8 +160,10 @@ jobs:
             # lockfile, toolchain pin) are PGO inputs too: a bump can break
             # the instrumented/profile-use build or the training run while
             # the plain PGO=off compile stays green.
+            # Paths are monorepo-root relative, so the Gateway inputs carry
+            # the apps/gateway/ prefix and the workflow itself is at root.
             if printf '%s\n' "$changed" \
-                | grep -qE '^(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|rust-toolchain\.toml|bench/pgo-training/|\.github/workflows/docker-image\.ya?ml)'; then
+                | grep -qE '^(apps/gateway/(Dockerfile|\.dockerignore|Cargo\.(toml|lock)|rust-toolchain\.toml|bench/pgo-training/)|\.github/workflows/gateway-docker-image\.ya?ml)'; then
               mode=on
             fi
           fi
@@ -243,7 +259,10 @@ jobs:
         id: build
         uses: docker/build-push-action@v7
         with:
-          context: .
+          # The Gateway application is the container build context, and the
+          # context-relative Dockerfile is apps/gateway/Dockerfile.
+          context: apps/gateway
+          file: apps/gateway/Dockerfile
           platforms: ${{ matrix.platform }}
           # Pushed untagged and addressed by digest: the tags belong to the
           # manifest list `merge` builds out of both legs. A tag written here
@@ -263,7 +282,7 @@ jobs:
           # evict each other's layers on every single build.
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-          provenance: false   # keep manifest format compatible with older clients
+          provenance: false # keep manifest format compatible with older clients
 
       # Fail the release if the published image does not self-report the
       # tagged version — the guard that keeps `Server: SibylHub Gateway/<ver>` /
@@ -653,7 +672,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: steps.openapi-secrets.outputs.enabled == 'true'
 
-      - uses: ./.github/actions/setup-protoc
+      - uses: ./apps/gateway/.github/actions/setup-protoc
         if: steps.openapi-secrets.outputs.enabled == 'true'
 
       - uses: Swatinem/rust-cache@v2
@@ -704,7 +723,10 @@ jobs:
         uses: chetan/invalidate-cloudfront-action@v2
         env:
           DISTRIBUTION: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
-          PATHS_FROM: .updated_openapi_files
+          # Action inputs resolve from the checkout workspace, not the shell's
+          # default working directory, so the file written under apps/gateway
+          # needs the monorepo prefix here.
+          PATHS_FROM: apps/gateway/.updated_openapi_files
           AWS_REGION: "${{ secrets.S3_BUCKET_REGION }}"
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
